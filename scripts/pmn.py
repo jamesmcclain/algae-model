@@ -3,7 +3,6 @@
 import csv
 from datetime import datetime
 
-
 if __name__ == '__main__':
     import argparse
 
@@ -38,7 +37,11 @@ if __name__ == '__main__':
                 genus = '?'
                 species = '?'
                 genus_species = row.get('spec_name').replace(' ', '_').lower()
-                cellcount = {'present': 1, 'common': 2, 'abundant': 3}.get(row.get('abundance').lower())
+                cellcount = {
+                    'present': 1,
+                    'common': 2,
+                    'abundant': 3
+                }.get(row.get('abundance').lower())
                 month = date_obj.month
                 day = date_obj.day
                 year = date_obj.year
@@ -47,4 +50,5 @@ if __name__ == '__main__':
                     continue
 
                 print(
-                    f'{year},{month},{day},{lat},{lon},{genus_species},{cellcount}')
+                    f'{year},{month},{day},{lat},{lon},{genus_species},{cellcount}'
+                )

@@ -2,13 +2,12 @@
 
 import csv
 import io
-import lzip
 import itertools
 import json
-from shapely.geometry import Point
-from shapely.geometry import MultiPoint
-from shapely.geometry import mapping
 from datetime import datetime, timedelta, timezone
+
+import lzip
+from shapely.geometry import MultiPoint, Point, mapping
 
 
 def lzip_or_file(filename):
@@ -16,6 +15,7 @@ def lzip_or_file(filename):
         return io.StringIO(lzip.decompress_file(filename).decode('utf-8'))
     else:
         return open(filename, 'r')
+
 
 if __name__ == '__main__':
     import argparse
