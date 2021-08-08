@@ -3,7 +3,6 @@
 import csv
 from datetime import datetime
 
-
 if __name__ == '__main__':
     import argparse
 
@@ -48,4 +47,5 @@ if __name__ == '__main__':
                     continue
 
                 print(
-                    f'{year},{month},{day},{lat},{lon},{genus_species},{cellcount}')
+                    f'{year},{month},{day},{lat},{lon},{genus_species},{cellcount}'
+                )
