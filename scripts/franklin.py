@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 
 import csv
+import io
+import lzip
 import itertools
 import json
 from shapely.geometry import Point
 from shapely.geometry import MultiPoint
 from shapely.geometry import mapping
 from datetime import datetime, timedelta, timezone
+
+
+def lzip_or_file(filename):
+    if filename.endswith('.lz'):
+        return io.StringIO(lzip.decompress_file(filename).decode('utf-8'))
+    else:
+        return open(filename, 'r')
 
 if __name__ == '__main__':
     import argparse
@@ -22,7 +31,7 @@ if __name__ == '__main__':
 
     rows = []
     for filename in args.csv:
-        with open(filename, 'r') as csv_file:
+        with lzip_or_file(filename) as csv_file:
             csv_reader = csv.DictReader(csv_file)
             for row in csv_reader:
                 rows.append(row)
