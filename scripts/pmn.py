@@ -40,8 +40,11 @@ if __name__ == '__main__':
                 cellcount = {
                     'present': 1,
                     'common': 2,
-                    'abundant': 3
+                    'abundant': 3,
+                    'bloom': 4,
                 }.get(row.get('abundance').lower())
+                if cellcount is None:
+                    cellcount = int(float(row.get('count')))
                 month = date_obj.month
                 day = date_obj.day
                 year = date_obj.year
