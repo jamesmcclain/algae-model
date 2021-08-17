@@ -1,2 +1,6 @@
+*.txt
+*.npz
 *.csv
 *.query
+*.result
+*.results
