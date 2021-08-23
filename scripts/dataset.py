@@ -61,6 +61,8 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser()
         parser.add_argument('--csv', required=True, type=str, nargs='+')
         parser.add_argument('--days', required=False, type=int, default=1)
+        parser.add_argument('--imagery', required=False,
+                            choices=['aviris', 'sentinel2'], default='aviris')
         parser.add_argument('--json', required=True, type=str)
         parser.add_argument('--n', required=False, type=int, default=32)
         parser.add_argument('--savez', required=True, type=str)
@@ -133,7 +135,13 @@ if __name__ == '__main__':
                     if 0 <= x and x < w and 0 <= y and y < h:
                         print(f'{uri} {x} {y} {c}')
                         window = rasterio.windows.Window(x, y, args.n, args.n)
-                        stuff = ds.read(window=window).transpose(
+                        if args.imagery == 'aviris':
+                            indexes = list(range(1, 224+1))
+                        elif args.imagery == 'sentinel2':
+                            indexes = list(range(1, 12+1))
+                        else:
+                            raise Exception()
+                        stuff = ds.read(indexes=indexes, window=window).transpose(
                             (1, 2, 0)).astype(np.float64)
                         stuff_shape = stuff.shape
                         desired_shape = (args.n, args.n, stuff_shape[2])
