@@ -61,9 +61,12 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser()
         parser.add_argument('--csv', required=True, type=str, nargs='+')
         parser.add_argument('--days', required=False, type=int, default=1)
+        parser.add_argument('--imagery', required=False,
+                            choices=['aviris', 'sentinel2'], default='aviris')
         parser.add_argument('--json', required=True, type=str)
         parser.add_argument('--n', required=False, type=int, default=32)
         parser.add_argument('--savez', required=True, type=str)
+        parser.add_argument('--outcsv', required=False, type=str, default=None)
         return parser
 
     args = cli_parser().parse_args()
@@ -92,6 +95,12 @@ if __name__ == '__main__':
                 t = (dt, xy, cellcount)
                 observations.append(t)
     observations = sorted(observations)
+
+    if args.outcsv is not None:
+        csv_f = open(args.outcsv, 'w')
+        csv_f.write('datetime,world_x,world_y,image_x,image_y,count,uri\n')
+    else:
+        csv_f = None
 
     # for each scene ...
     with lzip_or_file(args.json) as f:
@@ -128,12 +137,19 @@ if __name__ == '__main__':
                 ys = [o[1][1] for o in observations2]
                 (xs, ys) = rasterio.warp.transform(wgs84, crs, xs=xs, ys=ys)
                 xys = [ds.index(x, y) for (x, y) in zip(xs, ys)]
+                dts = [o[0] for o in observations2]
 
-                for ((x, y), c) in [(xy, c) for (xy, c) in zip(xys, cs)]:
+                for ((x, y), c, dt, wx, wy) in zip(xys, cs, dts, xs, ys):
                     if 0 <= x and x < w and 0 <= y and y < h:
                         print(f'{uri} {x} {y} {c}')
                         window = rasterio.windows.Window(x, y, args.n, args.n)
-                        stuff = ds.read(window=window).transpose(
+                        if args.imagery == 'aviris':
+                            indexes = list(range(1, 224+1))
+                        elif args.imagery == 'sentinel2':
+                            indexes = list(range(1, 12+1))
+                        else:
+                            raise Exception()
+                        stuff = ds.read(indexes=indexes, window=window).transpose(
                             (1, 2, 0)).astype(np.float64)
                         stuff_shape = stuff.shape
                         desired_shape = (args.n, args.n, stuff_shape[2])
@@ -141,12 +157,20 @@ if __name__ == '__main__':
                             temp = np.zeros(desired_shape, dtype=np.float64)
                             temp[0:stuff_shape[0], 0:stuff_shape[1], :] = stuff
                             stuff = temp
-                        if (c > 0):
-                            yes.append(stuff)
-                        else:
-                            no.append(stuff)
+                        if stuff.sum() > 0:
+                            if csv_f is not None:
+                                csv_f.write(f'{dt},{wx},{wy},{x},{y},{c},{uri}\n')
+                                csv_f.flush()
+                            if (c > 0):
+                                yes.append(stuff)
+                            else:
+                                no.append(stuff)
 
     # save results
+    if csv_f is not None:
+        csv_f.close()
+
     yes = np.stack(yes, axis=3)
     no = np.stack(no, axis=3)
+    print(f'yes={yes.shape} no={no.shape}')
     np.savez(args.savez, yes=yes, no=no)
