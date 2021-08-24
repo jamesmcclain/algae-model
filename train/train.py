@@ -29,9 +29,11 @@ def cli_parser():
                         required=False,
                         choices=['aviris', 'sentinel2'],
                         default='aviris')
+    parser.add_argument('--lr', required=False, type=float, default=1e-4)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
+    parser.add_argument('--w', required=False, type=float, default=0.0)
 
     parser.add_argument('--cheaplab', dest='cheaplab', action='store_true')
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
@@ -61,6 +63,16 @@ def greens_function(x, x0, eps=1e-3):
     out = -((x - x0) * (x - x0)) / (eps * eps)
     out = torch.exp(out)
     return out
+
+
+def entropy_function(x, w=1e-1):
+    s = torch.sigmoid(x)
+    pyes_narrow = torch.mean(greens_function(s, 0.25, 1.0 / 16))
+    pyes_wide = torch.mean(greens_function(s, 0.25, 1.0 / 8))
+    pno_narrow = torch.mean(greens_function(s, 0.75, 1.0 / 16))
+    pno_wide = torch.mean(greens_function(s, 0.75, 1.0 / 8))
+    return w * ((pyes_narrow * torch.log(pyes_wide)) +
+                (pno_narrow * torch.log(pno_wide)))
 
 
 class AlgaeClassifier(torch.nn.Module):
@@ -215,12 +227,21 @@ if __name__ == '__main__':
                             backbone_str=args.backbone)
     model.to(device)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
     dl = DataLoader(AlgaeDataset(args.savez), **dataloader_cfg)
 
+    log.info(f'backbone={args.backbone}')
     log.info(f'cheaplab={args.cheaplab}')
+    log.info(f'epochs1={args.epochs1}')
+    log.info(f'epochs2={args.epochs2}')
+    log.info(f'imagery={args.imagery}')
+    log.info(f'pth-load={args.pth_load}')
+    log.info(f'pth-save={args.pth_save}')
+    log.info(f'savez={args.savez}')
+    log.info(f'parameter lr: {args.lr}')
+    log.info(f'parameter w:  {args.w}')
 
     if args.pth_load is None:
         log.info('Training everything')
@@ -230,7 +251,8 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
-                loss = constraint
+                entropy = entropy_function(out, args.w)
+                loss = constraint + entropy
                 losses.append(loss.item())
                 loss.backward()
                 opt.step()
@@ -247,7 +269,8 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
-                loss = constraint
+                entropy = entropy_function(out, args.w)
+                loss = constraint + entropy
                 losses.append(loss.item())
                 loss.backward()
                 opt.step()
@@ -262,7 +285,8 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
-                loss = constraint
+                entropy = entropy_function(out, args.w)
+                loss = constraint + entropy
                 losses.append(loss.item())
                 loss.backward()
                 opt.step()
@@ -279,7 +303,8 @@ if __name__ == '__main__':
         for (i, batch) in enumerate(dl):
             out = model(batch[0].float().to(device)).squeeze()
             constraint = obj(out, batch[1].float().to(device))
-            loss = constraint
+            entropy = entropy_function(out, args.w)
+            loss = constraint + entropy
             losses.append(loss.item())
             loss.backward()
             opt.step()
