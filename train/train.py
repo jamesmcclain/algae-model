@@ -5,6 +5,7 @@ import csv
 import logging
 import sys
 import math
+import warnings
 
 import numpy as np
 import torch
@@ -34,6 +35,9 @@ def cli_parser():
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
     parser.add_argument('--w', required=False, type=float, default=0.0)
+
+    parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
+    parser.set_defaults(ndwi_mask=False)
 
     parser.add_argument('--cheaplab', dest='cheaplab', action='store_true')
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
@@ -76,12 +80,14 @@ def entropy_function(x, w=1e-1):
 
 
 class AlgaeDataset(torch.utils.data.Dataset):
-    def __init__(self, savez):
+    def __init__(self, savez, ndwi_mask: bool = False):
         npz = np.load(savez)
         self.yes = npz.get('yes')
         self.no = npz.get('no')
         self.yeas = self.yes.shape[-1]
         self.nays = self.no.shape[-1]
+        self.ndwi_mask = ndwi_mask
+        warnings.filterwarnings('ignore')
 
     def __len__(self):
         return self.yeas + self.nays
@@ -92,6 +98,9 @@ class AlgaeDataset(torch.utils.data.Dataset):
         else:
             data, label = self.no[..., idx - self.yeas], 0
         data = data.transpose((2, 0, 1))
+        if self.ndwi_mask:
+            ndwi = (data[2] - data[7])/(data[2] + data[7])
+            data *= (ndwi > 0.3)
         return (data, label)
 
 
@@ -112,13 +121,14 @@ if __name__ == '__main__':
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
-    dl = DataLoader(AlgaeDataset(args.savez), **dataloader_cfg)
+    dl = DataLoader(AlgaeDataset(args.savez, args.ndwi_mask), **dataloader_cfg)
 
     log.info(f'backbone={args.backbone}')
     log.info(f'cheaplab={args.cheaplab}')
     log.info(f'epochs1={args.epochs1}')
     log.info(f'epochs2={args.epochs2}')
     log.info(f'imagery={args.imagery}')
+    log.info(f'ndwi-mask={args.ndwi_mask}')
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'savez={args.savez}')

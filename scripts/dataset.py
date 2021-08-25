@@ -61,16 +61,18 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser()
         parser.add_argument('--csv', required=True, type=str, nargs='+')
         parser.add_argument('--days', required=False, type=int, default=1)
-        parser.add_argument('--imagery', required=False,
-                            choices=['aviris', 'sentinel2'], default='aviris')
+        parser.add_argument('--imagery', required=False, choices=['aviris', 'sentinel2'], default='aviris')
         parser.add_argument('--json', required=True, type=str)
-        parser.add_argument('--n', required=False, type=int, default=32)
+        parser.add_argument('--window-size', required=False, type=int, default=32)
         parser.add_argument('--savez', required=True, type=str)
         parser.add_argument('--outcsv', required=False, type=str, default=None)
         return parser
 
     args = cli_parser().parse_args()
-    ddt = timedelta(days=args.days)
+    if args.days > 0:
+        ddt = timedelta(days=args.days)
+    else:
+        ddt = timedelta(hours=12)
     wgs84 = rasterio.crs.CRS.from_epsg(4326)
     yes = []
     no = []
@@ -106,11 +108,9 @@ if __name__ == '__main__':
     with lzip_or_file(args.json) as f:
         for feature in json.load(f).get('features'):
             try:
-                dt = feature.get('properties').get('datetime').replace(
-                    'Z', '+00:00')
+                dt = feature.get('properties').get('datetime').replace('Z', '+00:00')
                 dt = datetime.fromisoformat(dt).replace(tzinfo=None)
-                uri = feature.get('assets').get('tiff_0').get('href').replace(
-                    's3://', '/vsis3/')
+                uri = feature.get('assets').get('tiff_0').get('href').replace('s3://', '/vsis3/')
             except:
                 continue
 
@@ -142,7 +142,7 @@ if __name__ == '__main__':
                 for ((x, y), c, dt, wx, wy) in zip(xys, cs, dts, xs, ys):
                     if 0 <= x and x < w and 0 <= y and y < h:
                         print(f'{uri} {x} {y} {c}')
-                        window = rasterio.windows.Window(x, y, args.n, args.n)
+                        window = rasterio.windows.Window(x, y, args.window_size, args.window_size)
                         if args.imagery == 'aviris':
                             indexes = list(range(1, 224+1))
                         elif args.imagery == 'sentinel2':
@@ -152,7 +152,7 @@ if __name__ == '__main__':
                         stuff = ds.read(indexes=indexes, window=window).transpose(
                             (1, 2, 0)).astype(np.float64)
                         stuff_shape = stuff.shape
-                        desired_shape = (args.n, args.n, stuff_shape[2])
+                        desired_shape = (args.window_size, args.window_size, stuff_shape[2])
                         if stuff_shape != desired_shape:
                             temp = np.zeros(desired_shape, dtype=np.float64)
                             temp[0:stuff_shape[0], 0:stuff_shape[1], :] = stuff

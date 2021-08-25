@@ -27,6 +27,9 @@ def cli_parser():
     parser.add_argument('--stride', required=False, type=int, default=13)
     parser.add_argument('--window-size', required=False, type=int, default=32)
 
+    parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
+    parser.set_defaults(ndwi_mask=False)
+
     parser.add_argument('--cheaplab', dest='cheaplab', action='store_true')
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
@@ -81,7 +84,9 @@ if __name__ == '__main__':
         for batch in tqdm.tqdm(batches):
             windows = [infile_ds.read(indexes, window=Window(i, j, n, n)) for (i, j) in batch]
             windows = [w.astype(np.float32) for w in windows]
-            try:
+            if args.ndwi_mask:
+                windows = [w * (((w[2]-w[7])/(w[2]+w[7])) > 0.3) for w in windows]
+                try:
                 windows = np.stack(windows, axis=0)
             except:
                 continue
