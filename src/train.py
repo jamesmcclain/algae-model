@@ -3,8 +3,8 @@
 import argparse
 import csv
 import logging
-import sys
 import math
+import sys
 import warnings
 
 import numpy as np
@@ -36,10 +36,12 @@ def cli_parser():
     parser.add_argument('--savez', required=True, type=str)
     parser.add_argument('--w', required=False, type=float, default=0.0)
 
-    parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
+    parser.add_argument('--ndwi-mask',
+                        required=False,
+                        dest='ndwi_mask',
+                        action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
-    parser.add_argument('--cheaplab', dest='cheaplab', action='store_true')
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
 
@@ -99,8 +101,8 @@ class AlgaeDataset(torch.utils.data.Dataset):
             data, label = self.no[..., idx - self.yeas], 0
         data = data.transpose((2, 0, 1))
         if self.ndwi_mask:
-            ndwi = (data[2] - data[7])/(data[2] + data[7])
-            data *= (ndwi > 0.3)
+            ndwi = (data[2] - data[7]) / (data[2] + data[7])
+            data *= (ndwi > 0.0)
         return (data, label)
 
 

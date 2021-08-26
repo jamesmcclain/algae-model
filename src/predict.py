@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
 
 import argparse
-import logging
-import tqdm
-import numpy as np
-import torch
-import torch.hub
-import warnings
 import copy
-import rasterio as rio
-from rasterio.windows import Window
+import logging
 import sys
+import warnings
 
+import numpy as np
+import rasterio as rio
 import torch
 import torch.hub
+import tqdm
+from rasterio.windows import Window
 
 
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--backbone', required=True, type=str)
     parser.add_argument('--chunksize', required=False, type=int, default=256)
-    parser.add_argument('--imagery', required=True, choices=['aviris', 'sentinel2'])
+    parser.add_argument('--imagery',
+                        required=True,
+                        choices=['aviris', 'sentinel2'])
     parser.add_argument('--infile', required=True, type=str)
     parser.add_argument('--outfile', required=True, type=str)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--stride', required=False, type=int, default=13)
     parser.add_argument('--window-size', required=False, type=int, default=32)
 
-    parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
+    parser.add_argument('--ndwi-mask',
+                        required=False,
+                        dest='ndwi_mask',
+                        action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
     parser.add_argument('--cheaplab', dest='cheaplab', action='store_true')
@@ -69,24 +72,33 @@ if __name__ == '__main__':
         pixel_hits = torch.zeros((1, height, width), dtype=torch.uint8).to(device)
 
         if args.imagery == 'aviris':
-            indexes = list(range(1,224+1))
+            indexes = list(range(1, 224 + 1))
         elif args.imagery == 'sentinel2':
-            indexes = list(range(1,12+1))
+            indexes = list(range(1, 12 + 1))
         n = args.window_size
 
         # gather up batches
         batches = []
-        for i in range(0, width-n, args.stride):
-            for j in range(0, height-n, args.stride):
+        for i in range(0, width - n, args.stride):
+            for j in range(0, height - n, args.stride):
                 batches.append((i, j))
-        batches = [batches[i:i + args.chunksize] for i in range(0, len(batches), args.chunksize)]
+        batches = [
+            batches[i:i + args.chunksize]
+            for i in range(0, len(batches), args.chunksize)
+        ]
 
         for batch in tqdm.tqdm(batches):
-            windows = [infile_ds.read(indexes, window=Window(i, j, n, n)) for (i, j) in batch]
+            windows = [
+                infile_ds.read(indexes, window=Window(i, j, n, n))
+                for (i, j) in batch
+            ]
             windows = [w.astype(np.float32) for w in windows]
             if args.ndwi_mask:
-                windows = [w * (((w[2]-w[7])/(w[2]+w[7])) > 0.3) for w in windows]
-                try:
+                windows = [
+                    w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
+                    for w in windows
+                ]
+            try:
                 windows = np.stack(windows, axis=0)
             except:
                 continue
@@ -94,8 +106,8 @@ if __name__ == '__main__':
             prob = torch.sigmoid(model(windows))
 
             for k, (i, j) in enumerate(batch):
-                ar_out[0, j:(j+n), i:(i+n)] += prob[k]
-                pixel_hits[0, j:(j+n), i:(i+n)] += 1
+                ar_out[0, j:(j + n), i:(i + n)] += prob[k]
+                pixel_hits[0, j:(j + n), i:(i + n)] += 1
 
     # Bring results back to CPU
     ar_out /= pixel_hits
@@ -103,4 +115,6 @@ if __name__ == '__main__':
 
     # Write results to file
     with rio.open(args.outfile, 'w', **out_raw_profile) as outfile_raw_ds:
-        outfile_raw_ds.write(ar_out[0], indexes=1, window=Window(0, 0, width, height))
+        outfile_raw_ds.write(ar_out[0],
+                             indexes=1,
+                             window=Window(0, 0, width, height))
