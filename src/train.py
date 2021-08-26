@@ -17,20 +17,29 @@ from torch.utils.data import DataLoader
 from torchvision.io import VideoReader
 from torchvision.transforms.functional import F_t
 
+BACKBONES = [
+    'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
+    'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
+    'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+]
+
 
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--backbone',
                         required=False,
                         type=str,
+                        choices=BACKBONES,
                         default='resnet18')
+    parser.add_argument('--batch-size', required=False, type=int, default=128)
     parser.add_argument('--epochs1', required=False, type=int, default=33)
     parser.add_argument('--epochs2', required=False, type=int, default=72)
     parser.add_argument('--imagery',
                         required=False,
                         choices=['aviris', 'sentinel2'],
                         default='aviris')
-    parser.add_argument('--lr', required=False, type=float, default=1e-4)
+    parser.add_argument('--lr1', required=False, type=float, default=1e-4)
+    parser.add_argument('--lr2', required=False, type=float, default=1e-4)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
@@ -41,6 +50,12 @@ def cli_parser():
                         dest='ndwi_mask',
                         action='store_true')
     parser.set_defaults(ndwi_mask=False)
+
+    parser.add_argument('--cloud-hack',
+                        required=False,
+                        dest='cloud_hack',
+                        action='store_true')
+    parser.set_defaults(cloud_hack=False)
 
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
@@ -87,13 +102,14 @@ def entropy_function(x, w=1e-1):
 
 
 class AlgaeDataset(torch.utils.data.Dataset):
-    def __init__(self, savez, ndwi_mask: bool = False):
+    def __init__(self, savez, ndwi_mask: bool = False, cloud_hack: bool = False):
         npz = np.load(savez)
         self.yes = npz.get('yes')
         self.no = npz.get('no')
         self.yeas = self.yes.shape[-1]
         self.nays = self.no.shape[-1]
         self.ndwi_mask = ndwi_mask
+        self.cloud_hack = cloud_hack
         warnings.filterwarnings('ignore')
 
     def __len__(self):
@@ -110,6 +126,9 @@ class AlgaeDataset(torch.utils.data.Dataset):
             ndwi = (data[2] - data[7]) / (data[2] + data[7])
             data *= (ndwi > 0.0)
 
+        if self.cloud_hack:
+            data *= ((data[3] > 100) * (data[3] < 1000))
+
         # Augmentations
         rn = np.random.randint(0, 37)
         if (rn % 2) < 1:
@@ -118,6 +137,10 @@ class AlgaeDataset(torch.utils.data.Dataset):
             data = np.flip(data, axis=(1 + (rn % 2)))
         if (rn % 5) < 3:
             data = np.transpose(data, (0, 2, 1))
+        if (rn % 13) == 0:
+            data *= 1.033
+        elif (rn % 13) == 1:
+            data /= 1.072
         data = np.rot90(data, k=(rn % 4), axes=(1, 2)).copy()
 
         return (data, label)
@@ -129,6 +152,8 @@ if __name__ == '__main__':
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
     log = logging.getLogger()
 
+    dataloader_cfg['batch_size'] = args.batch_size
+
     device = torch.device('cuda')
     model = torch.hub.load('jamesmcclain/algae-classifier:master',
                            'make_algae_model',
@@ -137,13 +162,15 @@ if __name__ == '__main__':
                            backbone_str=args.backbone)
     model.to(device)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr1)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
-    dl = DataLoader(AlgaeDataset(args.savez, args.ndwi_mask), **dataloader_cfg)
+    dl = DataLoader(AlgaeDataset(savez=args.savez, ndwi_mask=args.ndwi_mask, cloud_hack=args.cloud_hack), **dataloader_cfg)
 
     log.info(f'backbone={args.backbone}')
+    log.info(f'batch-size={args.batch_size}')
     log.info(f'cheaplab={args.cheaplab}')
+    log.info(f'cloud-hack={args.cloud_hack}')
     log.info(f'epochs1={args.epochs1}')
     log.info(f'epochs2={args.epochs2}')
     log.info(f'imagery={args.imagery}')
@@ -151,8 +178,9 @@ if __name__ == '__main__':
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'savez={args.savez}')
-    log.info(f'parameter lr: {args.lr}')
-    log.info(f'parameter w:  {args.w}')
+    log.info(f'parameter lr1: {args.lr1}')
+    log.info(f'parameter lr2: {args.lr2}')
+    log.info(f'parameter w:   {args.w}')
 
     if args.pth_load is None:
         log.info('Training everything')
@@ -209,6 +237,8 @@ if __name__ == '__main__':
         model.to(device)
 
     log.info('Training everything')
+    opt = torch.optim.AdamW(model.parameters(), lr=args.lr2)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr2, total_steps=args.epochs2)
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         losses = []
@@ -221,6 +251,7 @@ if __name__ == '__main__':
             loss.backward()
             opt.step()
             opt.zero_grad()
+        sched.step()
         log.info(f'epoch={epoch} constraint={np.mean(losses)}')
 
     if args.pth_save is not None:

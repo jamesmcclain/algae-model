@@ -14,10 +14,17 @@ import tqdm
 from rasterio.windows import Window
 
 
+BACKBONES = [
+    'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
+    'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
+    'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+]
+
+
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone', required=True, type=str)
-    parser.add_argument('--chunksize', required=False, type=int, default=256)
+    parser.add_argument('--backbone', required=True, type=str, choices=BACKBONES)
+    parser.add_argument('--chunksize', required=False, type=int, default=2048)
     parser.add_argument('--imagery',
                         required=True,
                         choices=['aviris', 'sentinel2'])
@@ -33,7 +40,12 @@ def cli_parser():
                         action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
-    parser.add_argument('--cheaplab', dest='cheaplab', action='store_true')
+    parser.add_argument('--cloud-hack',
+                        required=False,
+                        dest='cloud_hack',
+                        action='store_true')
+    parser.set_defaults(cloud_hack=False)
+
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
 
@@ -98,6 +110,12 @@ if __name__ == '__main__':
                     w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
                     for w in windows
                 ]
+            if args.cloud_hack:
+                windows = [
+                    (w * (w[3] > 100) * (w[3] < 1000))
+                    for w in windows
+                ]
+
             try:
                 windows = np.stack(windows, axis=0)
             except:
