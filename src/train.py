@@ -40,9 +40,11 @@ def cli_parser():
                         default='aviris')
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
     parser.add_argument('--lr2', required=False, type=float, default=1e-4)
+    parser.add_argument('--num-workers', required=False, type=int, default=8)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
+    parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w', required=False, type=float, default=0.0)
 
     parser.add_argument('--ndwi-mask',
@@ -60,6 +62,11 @@ def cli_parser():
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
 
+    parser.add_argument('--no-pretrained',
+                        dest='pretrained',
+                        action='store_false')
+    parser.set_defaults(pretrained=True)
+
     return parser
 
 
@@ -68,8 +75,8 @@ def worker_init_fn(x):
 
 
 dataloader_cfg = {
-    'batch_size': 128,
-    'num_workers': 8,
+    'batch_size': None,
+    'num_workers': None,
     'shuffle': True,
     'worker_init_fn': worker_init_fn
 }
@@ -102,7 +109,10 @@ def entropy_function(x, w=1e-1):
 
 
 class AlgaeDataset(torch.utils.data.Dataset):
-    def __init__(self, savez, ndwi_mask: bool = False, cloud_hack: bool = False):
+    def __init__(self,
+                 savez,
+                 ndwi_mask: bool = False,
+                 cloud_hack: bool = False):
         npz = np.load(savez)
         self.yes = npz.get('yes')
         self.no = npz.get('no')
@@ -153,19 +163,24 @@ if __name__ == '__main__':
     log = logging.getLogger()
 
     dataloader_cfg['batch_size'] = args.batch_size
+    dataloader_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
     model = torch.hub.load('jamesmcclain/algae-classifier:master',
                            'make_algae_model',
                            imagery=args.imagery,
                            use_cheaplab=args.cheaplab,
-                           backbone_str=args.backbone)
+                           backbone_str=args.backbone,
+                           pretrained=args.pretrained)
     model.to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr1)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
-    dl = DataLoader(AlgaeDataset(savez=args.savez, ndwi_mask=args.ndwi_mask, cloud_hack=args.cloud_hack), **dataloader_cfg)
+    dl = DataLoader(
+        AlgaeDataset(savez=args.savez,
+                     ndwi_mask=args.ndwi_mask,
+                     cloud_hack=args.cloud_hack), **dataloader_cfg)
 
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
@@ -175,11 +190,15 @@ if __name__ == '__main__':
     log.info(f'epochs2={args.epochs2}')
     log.info(f'imagery={args.imagery}')
     log.info(f'ndwi-mask={args.ndwi_mask}')
+    log.info(f'num-workers={args.num_workers}')
+    log.info(f'pretrained={args.pretrained}')
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'savez={args.savez}')
+
     log.info(f'parameter lr1: {args.lr1}')
     log.info(f'parameter lr2: {args.lr2}')
+    log.info(f'parameter w0:  {args.w0}')
     log.info(f'parameter w:   {args.w}')
 
     if args.pth_load is None:
@@ -191,7 +210,7 @@ if __name__ == '__main__':
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = constraint + entropy
+                loss = args.w0 * constraint + entropy
                 losses.append(loss.item())
                 loss.backward()
                 opt.step()
@@ -209,7 +228,7 @@ if __name__ == '__main__':
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = constraint + entropy
+                loss = args.w0 * constraint + entropy
                 losses.append(loss.item())
                 loss.backward()
                 opt.step()
@@ -225,7 +244,7 @@ if __name__ == '__main__':
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = constraint + entropy
+                loss = args.w0 * constraint + entropy
                 losses.append(loss.item())
                 loss.backward()
                 opt.step()
@@ -238,7 +257,9 @@ if __name__ == '__main__':
 
     log.info('Training everything')
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr2)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr2, total_steps=args.epochs2)
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt,
+                                                max_lr=args.lr2,
+                                                total_steps=args.epochs2)
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         losses = []
@@ -246,7 +267,7 @@ if __name__ == '__main__':
             out = model(batch[0].float().to(device)).squeeze()
             constraint = obj(out, batch[1].float().to(device))
             entropy = entropy_function(out, args.w)
-            loss = constraint + entropy
+            loss = args.w0 * constraint + entropy
             losses.append(loss.item())
             loss.backward()
             opt.step()

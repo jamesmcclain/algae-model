@@ -13,7 +13,6 @@ import torch.hub
 import tqdm
 from rasterio.windows import Window
 
-
 BACKBONES = [
     'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
     'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
@@ -23,7 +22,10 @@ BACKBONES = [
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone', required=True, type=str, choices=BACKBONES)
+    parser.add_argument('--backbone',
+                        required=True,
+                        type=str,
+                        choices=BACKBONES)
     parser.add_argument('--chunksize', required=False, type=int, default=2048)
     parser.add_argument('--imagery',
                         required=True,
@@ -65,7 +67,8 @@ if __name__ == '__main__':
                            'make_algae_model',
                            imagery=args.imagery,
                            use_cheaplab=args.cheaplab,
-                           backbone_str=args.backbone)
+                           backbone_str=args.backbone,
+                           pretrained=False)
     model.load_state_dict(torch.load(args.pth_load))
     model.to(device)
     model.eval()
@@ -80,8 +83,10 @@ if __name__ == '__main__':
         })
         width = infile_ds.width
         height = infile_ds.height
-        ar_out = torch.zeros((1, height, width), dtype=torch.float32).to(device)
-        pixel_hits = torch.zeros((1, height, width), dtype=torch.uint8).to(device)
+        ar_out = torch.zeros((1, height, width),
+                             dtype=torch.float32).to(device)
+        pixel_hits = torch.zeros((1, height, width),
+                                 dtype=torch.uint8).to(device)
 
         if args.imagery == 'aviris':
             indexes = list(range(1, 224 + 1))
@@ -111,16 +116,14 @@ if __name__ == '__main__':
                     for w in windows
                 ]
             if args.cloud_hack:
-                windows = [
-                    (w * (w[3] > 100) * (w[3] < 1000))
-                    for w in windows
-                ]
+                windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
 
             try:
                 windows = np.stack(windows, axis=0)
             except:
                 continue
-            windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
+            windows = torch.from_numpy(windows).to(dtype=torch.float32,
+                                                   device=device)
             prob = torch.sigmoid(model(windows))
 
             for k, (i, j) in enumerate(batch):
