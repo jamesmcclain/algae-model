@@ -1,6 +1,9 @@
+*.pth
 *.txt
 *.npz
 *.csv
 *.query
 *.result
 *.results
+*.tif
+*.tiff
