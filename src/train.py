@@ -48,10 +48,15 @@ def cli_parser():
     return parser
 
 
+def worker_init_fn(x):
+    np.random.seed(42 + x)
+
+
 dataloader_cfg = {
     'batch_size': 128,
     'num_workers': 8,
     'shuffle': True,
+    'worker_init_fn': worker_init_fn
 }
 
 
@@ -100,9 +105,21 @@ class AlgaeDataset(torch.utils.data.Dataset):
         else:
             data, label = self.no[..., idx - self.yeas], 0
         data = data.transpose((2, 0, 1))
+
         if self.ndwi_mask:
             ndwi = (data[2] - data[7]) / (data[2] + data[7])
             data *= (ndwi > 0.0)
+
+        # Augmentations
+        rn = np.random.randint(0, 37)
+        if (rn % 2) < 1:
+            data = np.transpose(data, axes=(0, 2, 1))
+        if (rn % 3) < 2:
+            data = np.flip(data, axis=(1 + (rn % 2)))
+        if (rn % 5) < 3:
+            data = np.transpose(data, (0, 2, 1))
+        data = np.rot90(data, k=(rn % 4), axes=(1, 2)).copy()
+
         return (data, label)
 
 
