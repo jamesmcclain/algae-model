@@ -44,7 +44,6 @@ def cli_parser():
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
-    parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w', required=False, type=float, default=0.0)
 
     parser.add_argument('--ndwi-mask',
@@ -98,7 +97,7 @@ def greens_function(x, x0, eps=1e-3):
     return out
 
 
-def entropy_function(x, w=1e-1):
+def entropy_function(x, w=0.5):
     s = torch.sigmoid(x)
     pyes_narrow = torch.mean(greens_function(s, 0.25, 1.0 / 16))
     pyes_wide = torch.mean(greens_function(s, 0.25, 1.0 / 8))
@@ -198,58 +197,63 @@ if __name__ == '__main__':
 
     log.info(f'parameter lr1: {args.lr1}')
     log.info(f'parameter lr2: {args.lr2}')
-    log.info(f'parameter w0:  {args.w0}')
     log.info(f'parameter w:   {args.w}')
 
     if args.pth_load is None:
         log.info('Training everything')
-        unfreeze(model.backbone)
+        unfreeze(model)
         for epoch in range(0, args.epochs1):
             losses = []
+            constraints = []
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = args.w0 * constraint + entropy
+                loss = constraint + entropy
                 losses.append(loss.item())
+                constraints.append(constraint.item())
                 loss.backward()
                 opt.step()
                 opt.zero_grad()
-            log.info(f'epoch={epoch} constraint={np.mean(losses)}')
+            log.info(f'epoch={epoch} loss={np.mean(losses)} constraint={np.mean(constraints)}')
 
-        log.info('Training input filters')
+        log.info('Training input filters and fully-connected layer')
         freeze(model)
         unfreeze(model.first)
+        unfreeze(model.last)
         if args.cheaplab:
             unfreeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
+            constraints = []
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = args.w0 * constraint + entropy
+                loss = constraint + entropy
                 losses.append(loss.item())
+                constraints.append(constraint.item())
                 loss.backward()
                 opt.step()
                 opt.zero_grad()
-            log.info(f'epoch={epoch} constraint={np.mean(losses)}')
+            log.info(f'epoch={epoch} loss={np.mean(losses)} constraint={np.mean(constraints)}')
 
-        log.info('Training fully-connected layer')
-        freeze(model)
-        unfreeze(model.last)
-        for epoch in range(0, args.epochs1):
-            losses = []
-            for (i, batch) in enumerate(dl):
-                out = model(batch[0].float().to(device)).squeeze()
-                constraint = obj(out, batch[1].float().to(device))
-                entropy = entropy_function(out, args.w)
-                loss = args.w0 * constraint + entropy
-                losses.append(loss.item())
-                loss.backward()
-                opt.step()
-                opt.zero_grad()
-            log.info(f'epoch={epoch} constraint={np.mean(losses)}')
+        # log.info('Training fully-connected layer')
+        # freeze(model)
+        # for epoch in range(0, args.epochs1):
+        #     losses = []
+        #     constraints = []
+        #     for (i, batch) in enumerate(dl):
+        #         out = model(batch[0].float().to(device)).squeeze()
+        #         constraint = obj(out, batch[1].float().to(device))
+        #         entropy = entropy_function(out, args.w)
+        #         loss = constraint + entropy
+        #         constraints.append(constraint.item())
+        #         losses.append(loss.item())
+        #         loss.backward()
+        #         opt.step()
+        #         opt.zero_grad()
+        #     log.info(f'epoch={epoch} loss={np.mean(losses)} constraint={np.mean(constraints)}')
     else:
         log.info(f'Loading model from {args.pth_load}')
         model.load_state_dict(torch.load(args.pth_load))
@@ -263,17 +267,22 @@ if __name__ == '__main__':
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         losses = []
+        constraints = []
+        entropies = []
         for (i, batch) in enumerate(dl):
             out = model(batch[0].float().to(device)).squeeze()
             constraint = obj(out, batch[1].float().to(device))
-            entropy = entropy_function(out, args.w)
-            loss = args.w0 * constraint + entropy
+            t = 0.5 * (1.0 - float(epoch/args.epochs2))
+            entropy = entropy_function(out, t)
+            loss = constraint + entropy
             losses.append(loss.item())
+            constraints.append(constraint.item())
+            entropies.append(entropy.item())
             loss.backward()
             opt.step()
             opt.zero_grad()
         sched.step()
-        log.info(f'epoch={epoch} constraint={np.mean(losses)}')
+        log.info(f'epoch={epoch} loss={np.mean(losses)} entropy={np.mean(entropies)} constraint={np.mean(constraints)}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
