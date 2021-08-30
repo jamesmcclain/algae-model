@@ -18,33 +18,32 @@ from torchvision.io import VideoReader
 from torchvision.transforms.functional import F_t
 
 BACKBONES = [
-    'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
-    'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
-    'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+    'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
+    'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
+    'resnet50', 'resnet101', 'resnet152'
 ]
 
 
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--backbone',
-                        required=False,
+                        required=True,
                         type=str,
-                        choices=BACKBONES,
-                        default='resnet18')
+                        choices=BACKBONES)
     parser.add_argument('--batch-size', required=False, type=int, default=128)
     parser.add_argument('--epochs1', required=False, type=int, default=33)
-    parser.add_argument('--epochs2', required=False, type=int, default=72)
+    parser.add_argument('--epochs2', required=False, type=int, default=2003)
     parser.add_argument('--imagery',
                         required=False,
                         choices=['aviris', 'sentinel2'],
-                        default='aviris')
+                        default='sentinel2')
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
     parser.add_argument('--lr2', required=False, type=float, default=1e-4)
     parser.add_argument('--num-workers', required=False, type=int, default=8)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
-    parser.add_argument('--w', required=False, type=float, default=0.0)
+    parser.add_argument('--w', required=False, type=float, default=0.50)
 
     parser.add_argument('--ndwi-mask',
                         required=False,
@@ -52,14 +51,16 @@ def cli_parser():
                         action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
-    parser.add_argument('--cloud-hack',
-                        required=False,
+    parser.add_argument('--no-cloud-hack',
                         dest='cloud_hack',
-                        action='store_true')
-    parser.set_defaults(cloud_hack=False)
+                        action='store_false')
+    parser.set_defaults(cloud_hack=True)
 
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
+
+    parser.add_argument('--no-schedule', dest='schedule', action='store_false')
+    parser.set_defaults(schedule=True)
 
     parser.add_argument('--no-pretrained',
                         dest='pretrained',
@@ -194,6 +195,7 @@ if __name__ == '__main__':
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'savez={args.savez}')
+    log.info(f'schedule={args.schedule}')
 
     log.info(f'parameter lr1: {args.lr1}')
     log.info(f'parameter lr2: {args.lr2}')
@@ -215,7 +217,32 @@ if __name__ == '__main__':
                 loss.backward()
                 opt.step()
                 opt.zero_grad()
-            log.info(f'epoch={epoch} loss={np.mean(losses)} constraint={np.mean(constraints)}')
+            mean_loss = np.mean(losses)
+            mean_constraint = np.mean(constraints)
+            mean_entropy = mean_loss - mean_constraint
+            log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
+
+        if args.cheaplab:
+            log.info('Training CheapLab')
+            freeze(model)
+            unfreeze(model.cheaplab)
+            for epoch in range(0, args.epochs1):
+                losses = []
+                constraints = []
+                for (i, batch) in enumerate(dl):
+                    out = model(batch[0].float().to(device)).squeeze()
+                    constraint = obj(out, batch[1].float().to(device))
+                    entropy = entropy_function(out, args.w)
+                    loss = constraint + entropy
+                    losses.append(loss.item())
+                    constraints.append(constraint.item())
+                    loss.backward()
+                    opt.step()
+                    opt.zero_grad()
+                mean_loss = np.mean(losses)
+                mean_constraint = np.mean(constraints)
+                mean_entropy = mean_loss - mean_constraint
+                log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
         log.info('Training input filters and fully-connected layer')
         freeze(model)
@@ -236,24 +263,10 @@ if __name__ == '__main__':
                 loss.backward()
                 opt.step()
                 opt.zero_grad()
-            log.info(f'epoch={epoch} loss={np.mean(losses)} constraint={np.mean(constraints)}')
-
-        # log.info('Training fully-connected layer')
-        # freeze(model)
-        # for epoch in range(0, args.epochs1):
-        #     losses = []
-        #     constraints = []
-        #     for (i, batch) in enumerate(dl):
-        #         out = model(batch[0].float().to(device)).squeeze()
-        #         constraint = obj(out, batch[1].float().to(device))
-        #         entropy = entropy_function(out, args.w)
-        #         loss = constraint + entropy
-        #         constraints.append(constraint.item())
-        #         losses.append(loss.item())
-        #         loss.backward()
-        #         opt.step()
-        #         opt.zero_grad()
-        #     log.info(f'epoch={epoch} loss={np.mean(losses)} constraint={np.mean(constraints)}')
+            mean_loss = np.mean(losses)
+            mean_constraint = np.mean(constraints)
+            mean_entropy = mean_loss - mean_constraint
+            log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
     else:
         log.info(f'Loading model from {args.pth_load}')
         model.load_state_dict(torch.load(args.pth_load))
@@ -268,21 +281,22 @@ if __name__ == '__main__':
     for epoch in range(0, args.epochs2):
         losses = []
         constraints = []
-        entropies = []
         for (i, batch) in enumerate(dl):
             out = model(batch[0].float().to(device)).squeeze()
             constraint = obj(out, batch[1].float().to(device))
-            t = 0.5 * (1.0 - float(epoch/args.epochs2))
-            entropy = entropy_function(out, t)
+            entropy = entropy_function(out, args.w)
             loss = constraint + entropy
             losses.append(loss.item())
             constraints.append(constraint.item())
-            entropies.append(entropy.item())
             loss.backward()
             opt.step()
             opt.zero_grad()
-        sched.step()
-        log.info(f'epoch={epoch} loss={np.mean(losses)} entropy={np.mean(entropies)} constraint={np.mean(constraints)}')
+        if args.schedule:
+            sched.step()
+        mean_loss = np.mean(losses)
+        mean_constraint = np.mean(constraints)
+        mean_entropy = mean_loss - mean_constraint
+        log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
