@@ -39,7 +39,7 @@ def cli_parser():
                         default='sentinel2')
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
     parser.add_argument('--lr2', required=False, type=float, default=1e-4)
-    parser.add_argument('--num-workers', required=False, type=int, default=8)
+    parser.add_argument('--num-workers', required=False, type=int, default=0)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
@@ -112,7 +112,8 @@ class AlgaeDataset(torch.utils.data.Dataset):
     def __init__(self,
                  savez,
                  ndwi_mask: bool = False,
-                 cloud_hack: bool = False):
+                 cloud_hack: bool = False,
+                 augment: bool = False):
         npz = np.load(savez)
         self.yes = npz.get('yes')
         self.no = npz.get('no')
@@ -120,6 +121,7 @@ class AlgaeDataset(torch.utils.data.Dataset):
         self.nays = self.no.shape[-1]
         self.ndwi_mask = ndwi_mask
         self.cloud_hack = cloud_hack
+        self.augment = augment
         warnings.filterwarnings('ignore')
 
     def __len__(self):
@@ -132,26 +134,29 @@ class AlgaeDataset(torch.utils.data.Dataset):
             data, label = self.no[..., idx - self.yeas], 0
         data = data.transpose((2, 0, 1))
 
+        # Sentinel-2 water mask
         if self.ndwi_mask:
             ndwi = (data[2] - data[7]) / (data[2] + data[7])
             data *= (ndwi > 0.0)
 
+        # Sentinel-2 cloud mask
         if self.cloud_hack:
             data *= ((data[3] > 100) * (data[3] < 1000))
 
         # Augmentations
-        rn = np.random.randint(0, 37)
-        if (rn % 2) < 1:
-            data = np.transpose(data, axes=(0, 2, 1))
-        if (rn % 3) < 2:
-            data = np.flip(data, axis=(1 + (rn % 2)))
-        if (rn % 5) < 3:
-            data = np.transpose(data, (0, 2, 1))
-        if (rn % 13) == 0:
-            data *= 1.033
-        elif (rn % 13) == 1:
-            data /= 1.072
-        data = np.rot90(data, k=(rn % 4), axes=(1, 2)).copy()
+        if self.augment:
+            if np.random.randint(0, 2) == 0:
+                data = np.transpose(data, axes=(0, 2, 1))
+            if np.random.randint(0, 2) == 0:
+                data = np.flip(data, axis=(1 + np.random.randint(0, 2)))
+            if np.random.randint(0, 2) == 0:
+                data = np.transpose(data, (0, 2, 1))
+            if np.random.randint(0, 5) < 1:
+                data *= (1.0 + ((np.random.rand(12, 1, 1) - 0.5) / 50))
+            if np.random.randint(0, 5) < 1:
+                data += ((np.random.randint(12, 32, 32) - 0.5) * 10)
+            data = np.rot90(data, k=np.random.randint(0, 4), axes=(1, 2))
+            data = data.copy()
 
         return (data, label)
 
@@ -177,10 +182,11 @@ if __name__ == '__main__':
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr1)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
-    dl = DataLoader(
-        AlgaeDataset(savez=args.savez,
-                     ndwi_mask=args.ndwi_mask,
-                     cloud_hack=args.cloud_hack), **dataloader_cfg)
+    ad = AlgaeDataset(savez=args.savez,
+                      ndwi_mask=args.ndwi_mask,
+                      cloud_hack=args.cloud_hack,
+                      augment=(args.imagery == 'sentinel2'))
+    dl = DataLoader(ad, **dataloader_cfg)
 
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
@@ -207,42 +213,45 @@ if __name__ == '__main__':
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
+            entropies = []
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = constraint + entropy
+                loss = constraint
                 losses.append(loss.item())
+                entropies.append(entropy.item())
                 constraints.append(constraint.item())
                 loss.backward()
                 opt.step()
                 opt.zero_grad()
             mean_loss = np.mean(losses)
             mean_constraint = np.mean(constraints)
-            mean_entropy = mean_loss - mean_constraint
+            mean_entropy = np.mean(entropies)
             log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
-        if args.cheaplab:
-            log.info('Training CheapLab')
-            freeze(model)
-            unfreeze(model.cheaplab)
-            for epoch in range(0, args.epochs1):
-                losses = []
-                constraints = []
-                for (i, batch) in enumerate(dl):
-                    out = model(batch[0].float().to(device)).squeeze()
-                    constraint = obj(out, batch[1].float().to(device))
-                    entropy = entropy_function(out, args.w)
-                    loss = constraint + entropy
-                    losses.append(loss.item())
-                    constraints.append(constraint.item())
-                    loss.backward()
-                    opt.step()
-                    opt.zero_grad()
-                mean_loss = np.mean(losses)
-                mean_constraint = np.mean(constraints)
-                mean_entropy = mean_loss - mean_constraint
-                log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
+        # if args.cheaplab:
+        #     log.info('Training CheapLab')
+        #     freeze(model)
+        #     unfreeze(model.cheaplab)
+        #     for epoch in range(0, args.epochs1):
+        #         losses = []
+        #         constraints = []
+        #         entropies = []
+        #         for (i, batch) in enumerate(dl):
+        #             out = model(batch[0].float().to(device)).squeeze()
+        #             constraint = obj(out, batch[1].float().to(device))
+        #             loss = constraint
+        #             losses.append(loss.item())
+        #             entropies.append(entropy.item())
+        #             constraints.append(constraint.item())
+        #             loss.backward()
+        #             opt.step()
+        #             opt.zero_grad()
+        #         mean_loss = np.mean(losses)
+        #         mean_constraint = np.mean(constraints)
+        #         mean_entropy = np.mean(entropies)
+        #         log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
         log.info('Training input filters and fully-connected layer')
         freeze(model)
@@ -253,19 +262,21 @@ if __name__ == '__main__':
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
+            entropies = []
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out, args.w)
-                loss = constraint + entropy
+                loss = constraint
                 losses.append(loss.item())
+                entropies.append(entropy.item())
                 constraints.append(constraint.item())
                 loss.backward()
                 opt.step()
                 opt.zero_grad()
             mean_loss = np.mean(losses)
             mean_constraint = np.mean(constraints)
-            mean_entropy = mean_loss - mean_constraint
+            mean_entropy = np.mean(entropies)
             log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
     else:
         log.info(f'Loading model from {args.pth_load}')
