@@ -38,7 +38,7 @@ def cli_parser():
                         choices=['aviris', 'sentinel2'],
                         default='sentinel2')
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
-    parser.add_argument('--lr2', required=False, type=float, default=1e-4)
+    parser.add_argument('--lr2', required=False, type=float, default=1e-5)
     parser.add_argument('--num-workers', required=False, type=int, default=0)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
@@ -310,6 +310,9 @@ if __name__ == '__main__':
             opt.zero_grad()
         if args.schedule:
             sched.step()
+        if epoch % 107 == 0:
+            log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
+            torch.save(model.state_dict(), '/tmp/checkpoint.pth')
         mean_loss = np.mean(losses)
         mean_constraint = np.mean(constraints)
         mean_entropy = np.mean(entropies)
