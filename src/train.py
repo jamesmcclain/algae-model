@@ -43,7 +43,8 @@ def cli_parser():
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
-    parser.add_argument('--w', required=False, type=float, default=0.50)
+    parser.add_argument('--w0', required=False, type=float, default=1.0)
+    parser.add_argument('--w1', required=False, type=float, default=0.0)
 
     parser.add_argument('--ndwi-mask',
                         required=False,
@@ -98,14 +99,14 @@ def greens_function(x, x0, eps=1e-3):
     return out
 
 
-def entropy_function(x, w=0.5):
+def entropy_function(x):
     s = torch.sigmoid(x)
-    pyes_narrow = torch.mean(greens_function(s, 0.25, 1.0 / 16))
-    pyes_wide = torch.mean(greens_function(s, 0.25, 1.0 / 8))
-    pno_narrow = torch.mean(greens_function(s, 0.75, 1.0 / 16))
-    pno_wide = torch.mean(greens_function(s, 0.75, 1.0 / 8))
-    return w * ((pyes_narrow * torch.log(pyes_wide)) +
-                (pno_narrow * torch.log(pno_wide)))
+    pno_narrow = torch.mean(greens_function(s, 0.25, 1.0 / 16))
+    pno_wide = torch.mean(greens_function(s, 0.25, 1.0 / 8))
+    pyes_narrow = torch.mean(greens_function(s, 0.75, 1.0 / 16))
+    pyes_wide = torch.mean(greens_function(s, 0.75, 1.0 / 8))
+    return ((pyes_narrow * torch.log(pyes_wide)) +
+            (pno_narrow * torch.log(pno_wide)))
 
 
 class AlgaeDataset(torch.utils.data.Dataset):
@@ -154,8 +155,10 @@ class AlgaeDataset(torch.utils.data.Dataset):
             if np.random.randint(0, 5) < 1:
                 data *= (1.0 + ((np.random.rand(12, 1, 1) - 0.5) / 50))
             if np.random.randint(0, 5) < 1:
-                data += ((np.random.randint(12, 32, 32) - 0.5) * 10)
+                data *= (1.0 + ((np.random.rand(12, 32, 32) - 0.5) / 500))
             data = np.rot90(data, k=np.random.randint(0, 4), axes=(1, 2))
+            if np.random.randint(0, 2) == 0:
+                data = np.transpose(data, (0, 2, 1))
             data = data.copy()
 
         return (data, label)
@@ -205,7 +208,8 @@ if __name__ == '__main__':
 
     log.info(f'parameter lr1: {args.lr1}')
     log.info(f'parameter lr2: {args.lr2}')
-    log.info(f'parameter w:   {args.w}')
+    log.info(f'parameter w0:   {args.w0}')
+    log.info(f'parameter w1:   {args.w1}')
 
     if args.pth_load is None:
         log.info('Training everything')
@@ -217,8 +221,8 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
-                entropy = entropy_function(out, args.w)
-                loss = constraint
+                entropy = entropy_function(out)
+                loss = args.w0 * constraint + args.w1 * entropy
                 losses.append(loss.item())
                 entropies.append(entropy.item())
                 constraints.append(constraint.item())
@@ -266,7 +270,7 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
-                entropy = entropy_function(out, args.w)
+                entropy = entropy_function(out)
                 loss = constraint
                 losses.append(loss.item())
                 entropies.append(entropy.item())
@@ -292,12 +296,14 @@ if __name__ == '__main__':
     for epoch in range(0, args.epochs2):
         losses = []
         constraints = []
+        entropies = []
         for (i, batch) in enumerate(dl):
             out = model(batch[0].float().to(device)).squeeze()
             constraint = obj(out, batch[1].float().to(device))
-            entropy = entropy_function(out, args.w)
-            loss = constraint + entropy
+            entropy = entropy_function(out)
+            loss = args.w0 * constraint + args.w1 * entropy
             losses.append(loss.item())
+            entropies.append(entropy.item())
             constraints.append(constraint.item())
             loss.backward()
             opt.step()
@@ -306,7 +312,7 @@ if __name__ == '__main__':
             sched.step()
         mean_loss = np.mean(losses)
         mean_constraint = np.mean(constraints)
-        mean_entropy = mean_loss - mean_constraint
+        mean_entropy = np.mean(entropies)
         log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
     if args.pth_save is not None:
@@ -318,13 +324,14 @@ if __name__ == '__main__':
     tn = 0.0
     fp = 0.0
     fn = 0.0
-    for (i, batch) in enumerate(dl):
-        pred = torch.sigmoid(model(batch[0].float().to(device))).squeeze()
-        pred = (pred > 0.5).detach().cpu().numpy().astype(np.uint8)
-        gt = batch[1].detach().cpu().numpy().astype(np.uint8)
-        tp += np.sum((pred == 1) * (gt == 1))
-        tn += np.sum((pred == 0) * (gt == 0))
-        fp += np.sum((pred == 1) * (gt == 0))
-        fn += np.sum((pred == 0) * (gt == 1))
+    with torch.no_grad():
+        for (i, batch) in enumerate(dl):
+            pred = torch.sigmoid(model(batch[0].float().to(device))).squeeze()
+            pred = (pred > 0.5).detach().cpu().numpy().astype(np.uint8)
+            gt = batch[1].detach().cpu().numpy().astype(np.uint8)
+            tp += np.sum((pred == 1) * (gt == 1))
+            tn += np.sum((pred == 0) * (gt == 0))
+            fp += np.sum((pred == 1) * (gt == 0))
+            fn += np.sum((pred == 0) * (gt == 1))
     total = tp + tn + fp + fn
     log.info(f'tpr={tp/(tp+fn)} tnr={tn/(tn+fp)}')
