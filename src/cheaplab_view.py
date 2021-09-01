@@ -73,7 +73,7 @@ if __name__ == '__main__':
             'compress': 'lzw',
             'dtype': np.float32,
             'count': 3,
-            'bigtiff': True,
+            'bigtiff': 'yes',
         })
         width = infile_ds.width
         height = infile_ds.height

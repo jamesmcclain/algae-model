@@ -49,11 +49,8 @@ def cli_parser():
                         action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
-    parser.add_argument('--cloud-hack',
-                        required=False,
-                        dest='cloud_hack',
-                        action='store_true')
-    parser.set_defaults(cloud_hack=False)
+    parser.add_argument('--no-cloud-hack', dest='cloud_hack', action='store_false')
+    parser.set_defaults(cloud_hack=True)
 
     parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
     parser.set_defaults(cheaplab=True)
@@ -86,7 +83,7 @@ if __name__ == '__main__':
             'compress': 'lzw',
             'dtype': np.float32,
             'count': 1,
-            'bigtiff': True,
+            'bigtiff': 'yes',
         })
         width = infile_ds.width
         height = infile_ds.height
