@@ -39,6 +39,7 @@ def cli_parser():
                         choices=['aviris', 'sentinel2'])
     parser.add_argument('--infile', required=True, type=str)
     parser.add_argument('--outfile', required=True, type=str)
+    parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--stride', required=False, type=int, default=13)
     parser.add_argument('--window-size', required=False, type=int, default=32)
@@ -67,9 +68,10 @@ if __name__ == '__main__':
     log = logging.getLogger()
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:master',
+    model = torch.hub.load('jamesmcclain/algae-classifier:prescale',
                            'make_algae_model',
                            imagery=args.imagery,
+                           prescale=args.prescale,
                            use_cheaplab=args.cheaplab,
                            backbone_str=args.backbone,
                            pretrained=False)
