@@ -13,19 +13,9 @@ import torch.hub
 import tqdm
 from rasterio.windows import Window
 
-BACKBONES = [
-    'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
-    'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
-    'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
-]
-
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone',
-                        required=True,
-                        type=str,
-                        choices=BACKBONES)
     parser.add_argument('--chunksize', required=False, type=int, default=2048)
     parser.add_argument('--device',
                         required=False,
@@ -71,9 +61,13 @@ if __name__ == '__main__':
                            imagery=args.imagery,
                            prescale=args.prescale,
                            use_cheaplab=True,
-                           backbone_str=args.backbone,
+                           backbone_str='resnet18',
                            pretrained=False)
-    model.load_state_dict(torch.load(args.pth_load))
+    state = torch.load(args.pth_load)
+    for key in list(state.keys()):
+        if 'cheaplab' not in key:
+            state.pop(key)
+    model.load_state_dict(state, strict=False)
     model = model.cheaplab
     model.to(device)
     model.eval()
