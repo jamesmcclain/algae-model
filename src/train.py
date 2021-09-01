@@ -20,7 +20,9 @@ from torchvision.transforms.functional import F_t
 BACKBONES = [
     'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
-    'resnet50', 'resnet101', 'resnet152'
+    'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
+    'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
+    'efficientnet_b6', 'efficientnet_b7'
 ]
 
 
@@ -176,7 +178,7 @@ if __name__ == '__main__':
     dataloader_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
-    model = torch.hub.load('jamesmcclain/algae-classifier:prescale',
+    model = torch.hub.load('jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
                            'make_algae_model',
                            imagery=args.imagery,
                            prescale=args.prescale,
@@ -227,8 +229,8 @@ if __name__ == '__main__':
     if args.pth_load is None:
         log.info('Training everything')
         unfreeze(model)
-        if args.cheaplab and not args.pth_cheaplab_donor:
-            freeze(model.cheaplab)
+        # if args.cheaplab and not args.pth_cheaplab_donor:
+        #     freeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
@@ -253,8 +255,8 @@ if __name__ == '__main__':
         freeze(model)
         unfreeze(model.first)
         unfreeze(model.last)
-        if args.cheaplab and not args.pth_cheaplab_donor:
-            freeze(model.cheaplab)
+        # if args.cheaplab and not args.pth_cheaplab_donor:
+        #     freeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
@@ -281,9 +283,9 @@ if __name__ == '__main__':
 
     log.info('Training everything')
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr2)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt,
-                                                max_lr=args.lr2,
-                                                total_steps=args.epochs2)
+    if args.epochs2 > 0:
+        sched = torch.optim.lr_scheduler.OneCycleLR(
+            opt, max_lr=args.lr2, total_steps=args.epochs2)
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         losses = []

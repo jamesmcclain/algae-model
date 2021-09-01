@@ -56,7 +56,7 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:prescale',
+    model = torch.hub.load('jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
                            'make_algae_model',
                            imagery=args.imagery,
                            prescale=args.prescale,
