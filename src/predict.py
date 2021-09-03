@@ -14,9 +14,11 @@ import tqdm
 from rasterio.windows import Window
 
 BACKBONES = [
-    'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
-    'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
-    'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
+    'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
+    'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
+    'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
+    'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
+    'efficientnet_b6', 'efficientnet_b7'
 ]
 
 
@@ -39,6 +41,7 @@ def cli_parser():
                         choices=['aviris', 'sentinel2'])
     parser.add_argument('--infile', required=True, type=str)
     parser.add_argument('--outfile', required=True, type=str)
+    parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--stride', required=False, type=int, default=13)
     parser.add_argument('--window-size', required=False, type=int, default=32)
@@ -67,9 +70,10 @@ if __name__ == '__main__':
     log = logging.getLogger()
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:master',
+    model = torch.hub.load('jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
                            'make_algae_model',
                            imagery=args.imagery,
+                           prescale=args.prescale,
                            use_cheaplab=args.cheaplab,
                            backbone_str=args.backbone,
                            pretrained=False)

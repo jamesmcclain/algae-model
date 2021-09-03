@@ -13,19 +13,9 @@ import torch.hub
 import tqdm
 from rasterio.windows import Window
 
-BACKBONES = [
-    'vgg16', 'squeezenet1_0', 'densenet161', 'shufflenet_v2_x1_0',
-    'mobilenet_v2', 'mobilenet_v3_large', 'mobilenet_v3_small', 'mnasnet1_0',
-    'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152'
-]
-
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone',
-                        required=True,
-                        type=str,
-                        choices=BACKBONES)
     parser.add_argument('--chunksize', required=False, type=int, default=2048)
     parser.add_argument('--device',
                         required=False,
@@ -39,8 +29,19 @@ def cli_parser():
                         choices=['aviris', 'sentinel2'])
     parser.add_argument('--infile', required=True, type=str)
     parser.add_argument('--outfile', required=True, type=str)
+    parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--window-size', required=False, type=int, default=32)
+
+    parser.add_argument('--ndwi-mask',
+                        required=False,
+                        dest='ndwi_mask',
+                        action='store_true')
+    parser.set_defaults(ndwi_mask=False)
+
+    parser.add_argument('--no-cloud-hack', dest='cloud_hack', action='store_false')
+    parser.set_defaults(cloud_hack=True)
+
     return parser
 
 
@@ -55,13 +56,18 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:master',
+    model = torch.hub.load('jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
                            'make_algae_model',
                            imagery=args.imagery,
+                           prescale=args.prescale,
                            use_cheaplab=True,
-                           backbone_str=args.backbone,
+                           backbone_str='resnet18',
                            pretrained=False)
-    model.load_state_dict(torch.load(args.pth_load))
+    state = torch.load(args.pth_load)
+    for key in list(state.keys()):
+        if 'cheaplab' not in key:
+            state.pop(key)
+    model.load_state_dict(state, strict=False)
     model = model.cheaplab
     model.to(device)
     model.eval()
@@ -102,6 +108,14 @@ if __name__ == '__main__':
                 for (i, j) in batch
             ]
             windows = [w.astype(np.float32) for w in windows]
+            if args.ndwi_mask:
+                windows = [
+                    w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
+                    for w in windows
+                ]
+            if args.cloud_hack:
+                windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
+
             try:
                 windows = np.stack(windows, axis=0)
             except:

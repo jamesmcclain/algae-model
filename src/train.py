@@ -20,7 +20,9 @@ from torchvision.transforms.functional import F_t
 BACKBONES = [
     'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
-    'resnet50', 'resnet101', 'resnet152'
+    'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
+    'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
+    'efficientnet_b6', 'efficientnet_b7'
 ]
 
 
@@ -40,6 +42,8 @@ def cli_parser():
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
     parser.add_argument('--lr2', required=False, type=float, default=1e-5)
     parser.add_argument('--num-workers', required=False, type=int, default=0)
+    parser.add_argument('--prescale', required=False, type=int, default=1)
+    parser.add_argument('--pth-cheaplab-donor', required=False, type=str, default=None)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--savez', required=True, type=str)
@@ -174,20 +178,29 @@ if __name__ == '__main__':
     dataloader_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
-    model = torch.hub.load('jamesmcclain/algae-classifier:master',
+    model = torch.hub.load('jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
                            'make_algae_model',
                            imagery=args.imagery,
+                           prescale=args.prescale,
                            use_cheaplab=args.cheaplab,
                            backbone_str=args.backbone,
                            pretrained=args.pretrained)
+
+    if args.pth_cheaplab_donor:
+        state = torch.load(args.pth_cheaplab_donor)
+        for key in list(state.keys()):
+            if 'cheaplab' not in key:
+                state.pop(key)
+        model.load_state_dict(state, strict=False)
+
     model.to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr1)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
     ad = AlgaeDataset(savez=args.savez,
-                      ndwi_mask=args.ndwi_mask,
-                      cloud_hack=args.cloud_hack,
+                      ndwi_mask=(args.ndwi_mask and args.imagery == 'sentinel2'),
+                      cloud_hack=(args.cloud_hack and args.imagery == 'sentinel2'),
                       augment=(args.imagery == 'sentinel2'))
     dl = DataLoader(ad, **dataloader_cfg)
 
@@ -200,7 +213,9 @@ if __name__ == '__main__':
     log.info(f'imagery={args.imagery}')
     log.info(f'ndwi-mask={args.ndwi_mask}')
     log.info(f'num-workers={args.num_workers}')
+    log.info(f'prescale={args.prescale}')
     log.info(f'pretrained={args.pretrained}')
+    log.info(f'pth-cheaplab-donor={args.pth_cheaplab_donor}')
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'savez={args.savez}')
@@ -214,6 +229,8 @@ if __name__ == '__main__':
     if args.pth_load is None:
         log.info('Training everything')
         unfreeze(model)
+        # if args.cheaplab and not args.pth_cheaplab_donor:
+        #     freeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
@@ -234,35 +251,12 @@ if __name__ == '__main__':
             mean_entropy = np.mean(entropies)
             log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
-        # if args.cheaplab:
-        #     log.info('Training CheapLab')
-        #     freeze(model)
-        #     unfreeze(model.cheaplab)
-        #     for epoch in range(0, args.epochs1):
-        #         losses = []
-        #         constraints = []
-        #         entropies = []
-        #         for (i, batch) in enumerate(dl):
-        #             out = model(batch[0].float().to(device)).squeeze()
-        #             constraint = obj(out, batch[1].float().to(device))
-        #             loss = constraint
-        #             losses.append(loss.item())
-        #             entropies.append(entropy.item())
-        #             constraints.append(constraint.item())
-        #             loss.backward()
-        #             opt.step()
-        #             opt.zero_grad()
-        #         mean_loss = np.mean(losses)
-        #         mean_constraint = np.mean(constraints)
-        #         mean_entropy = np.mean(entropies)
-        #         log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
-
         log.info('Training input filters and fully-connected layer')
         freeze(model)
         unfreeze(model.first)
         unfreeze(model.last)
-        if args.cheaplab:
-            unfreeze(model.cheaplab)
+        # if args.cheaplab and not args.pth_cheaplab_donor:
+        #     freeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
@@ -289,9 +283,9 @@ if __name__ == '__main__':
 
     log.info('Training everything')
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr2)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt,
-                                                max_lr=args.lr2,
-                                                total_steps=args.epochs2)
+    if args.epochs2 > 0:
+        sched = torch.optim.lr_scheduler.OneCycleLR(
+            opt, max_lr=args.lr2, total_steps=args.epochs2)
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         losses = []
