@@ -27,8 +27,8 @@ def cli_parser():
                         type=str,
                         default='sentinel2',
                         choices=['aviris', 'sentinel2'])
-    parser.add_argument('--infile', required=True, type=str)
-    parser.add_argument('--outfile', required=True, type=str)
+    parser.add_argument('--infile', required=True, type=str, nargs='+')
+    parser.add_argument('--outfile', required=True, type=str, nargs='+')
     parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--window-size', required=False, type=int, default=32)
@@ -73,63 +73,76 @@ if __name__ == '__main__':
     model.eval()
 
     # Read data
-    with rio.open(args.infile, 'r') as infile_ds, torch.no_grad():
-        out_raw_profile = copy.deepcopy(infile_ds.profile)
-        out_raw_profile.update({
-            'compress': 'lzw',
-            'dtype': np.float32,
-            'count': 3,
-            'bigtiff': 'yes',
-        })
-        width = infile_ds.width
-        height = infile_ds.height
-        data_out = torch.zeros((3, height, width),
-                               dtype=torch.float32).to(device)
+    for (infile, outfile) in zip(args.infile, args.outfile):
+        with rio.open(infile, 'r') as infile_ds, torch.no_grad():
+            out_raw_profile = copy.deepcopy(infile_ds.profile)
+            out_raw_profile.update({
+                'compress': 'lzw',
+                'dtype': np.float32,
+                'count': 3,
+                'bigtiff': 'yes',
+                'sparse_ok': 'yes',
+            })
+            width = infile_ds.width
+            height = infile_ds.height
+            data_out = torch.zeros((3, height, width),
+                                dtype=torch.float32).to(device)
 
-        if args.imagery == 'aviris':
-            indexes = list(range(1, 224 + 1))
-        elif args.imagery == 'sentinel2':
-            indexes = list(range(1, 12 + 1))
+            if args.imagery == 'aviris':
+                indexes = list(range(1, 224 + 1))
+            elif args.imagery == 'sentinel2':
+                indexes = list(range(1, 12 + 1))
 
-        # Gather up batches
-        batches = []
-        for i in range(0, width - n, n):
-            for j in range(0, height - n, n):
-                batches.append((i, j))
-        batches = [
-            batches[i:i + args.chunksize]
-            for i in range(0, len(batches), args.chunksize)
-        ]
-
-        # Evaluate batches
-        for batch in tqdm.tqdm(batches):
-            windows = [
-                infile_ds.read(indexes, window=Window(i, j, n, n))
-                for (i, j) in batch
+            # Gather up batches
+            batches = []
+            for i in range(0, width - n, n):
+                for j in range(0, height - n, n):
+                    batches.append((i, j))
+            batches = [
+                batches[i:i + args.chunksize]
+                for i in range(0, len(batches), args.chunksize)
             ]
-            windows = [w.astype(np.float32) for w in windows]
-            if args.ndwi_mask:
+
+            # Evaluate batches
+            for batch in tqdm.tqdm(batches):
                 windows = [
-                    w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
-                    for w in windows
+                    infile_ds.read(indexes, window=Window(i, j, n, n))
+                    for (i, j) in batch
                 ]
-            if args.cloud_hack:
-                windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
+                windows = [w.astype(np.float32) for w in windows]
+                if args.imagery == 'sentinel2':
+                    if args.ndwi_mask:
+                        windows = [
+                            w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
+                            for w in windows
+                        ]
+                    if args.cloud_hack:
+                        windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
+                elif args.imagery == 'aviris':
+                    if args.ndwi_mask:
+                        windows = [
+                            w * (((w[22] - w[50]) / (w[22] + w[50])) > 0.0)
+                            for w in windows
+                        ]
+                    if args.cloud_hack:
+                        windows = [(w * (w[33] > 600) * (w[33] < 2000)) for w in windows]
 
-            try:
-                windows = np.stack(windows, axis=0)
-            except:
-                continue
-            windows = torch.from_numpy(windows).to(dtype=torch.float32,
-                                                   device=device)
-            prob = torch.sigmoid(model(windows))
+                try:
+                    windows = np.stack(windows, axis=0)
+                except:
+                    continue
+                if windows.sum() == 0:
+                    continue
+                windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
+                prob = torch.sigmoid(model(windows))
 
-            for k, (i, j) in enumerate(batch):
-                data_out[:, j:(j + n), i:(i + n)] = prob[k]
+                for k, (i, j) in enumerate(batch):
+                    data_out[:, j:(j + n), i:(i + n)] = prob[k]
 
-        # Bring results back to CPU
-        data_out = data_out.cpu().numpy()
+            # Bring results back to CPU
+            data_out = data_out.cpu().numpy()
 
-    # Write results to file
-    with rio.open(args.outfile, 'w', **out_raw_profile) as outfile_raw_ds:
-        outfile_raw_ds.write(data_out)
+        # Write results to file
+        with rio.open(outfile, 'w', **out_raw_profile) as outfile_raw_ds:
+            outfile_raw_ds.write(data_out)
+        print()
