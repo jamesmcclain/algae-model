@@ -44,6 +44,9 @@ def cli_parser():
     parser.add_argument('--pth-save', required=True, type=str)
     parser.add_argument('--savez', required=True, type=str)
 
+    parser.add_argument('--no-augment', required=False, dest='augment', action='store_false')
+    parser.set_defaults(augment=True)
+
     parser.add_argument('--no-keep-cheaplab', required=False, dest='keep_cheaplab', action='store_false')
     parser.set_defaults(keep_cheaplab=True)
 
@@ -172,9 +175,10 @@ if __name__ == '__main__':
     ad = AlgaeDataset(savez=args.savez,
                       ndwi_mask=args.ndwi_mask,
                       cloud_hack=args.cloud_hack,
-                      augment=False)
+                      augment=args.augment)
     dl = DataLoader(ad, **dataloader_cfg)
 
+    log.info(f'augment={args.augment}')
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
     log.info(f'cloud-hack={args.cloud_hack}')
@@ -252,9 +256,10 @@ if __name__ == '__main__':
     model.to(device)
 
     log.info('Training CheapLab')
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt,
-                                                max_lr=args.lr,
-                                                total_steps=args.epochs)
+    if args.schedule:
+        sched = torch.optim.lr_scheduler.OneCycleLR(opt,
+                                                    max_lr=args.lr,
+                                                    total_steps=args.epochs)
 
     freeze(model.backbone)
     unfreeze(model.cheaplab)
