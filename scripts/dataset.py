@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import csv
 import io
 import itertools
@@ -54,19 +55,20 @@ def day_search(ar, lo_day, hi_day):
     return lo, hi
 
 
-if __name__ == '__main__':
-    import argparse
+def cli_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--csv', required=True, type=str, nargs='+')
+    parser.add_argument('--days', required=False, type=int, default=1)
+    parser.add_argument('--imagery', required=False,
+                        choices=['aviris', 'sentinel2'], default='aviris')
+    parser.add_argument('--json', required=True, type=str)
+    parser.add_argument('--window-size', required=False, type=int, default=32)
+    parser.add_argument('--savez', required=True, type=str)
+    parser.add_argument('--outcsv', required=False, type=str, default=None)
+    return parser
 
-    def cli_parser():
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--csv', required=True, type=str, nargs='+')
-        parser.add_argument('--days', required=False, type=int, default=1)
-        parser.add_argument('--imagery', required=False, choices=['aviris', 'sentinel2'], default='aviris')
-        parser.add_argument('--json', required=True, type=str)
-        parser.add_argument('--window-size', required=False, type=int, default=32)
-        parser.add_argument('--savez', required=True, type=str)
-        parser.add_argument('--outcsv', required=False, type=str, default=None)
-        return parser
+
+if __name__ == '__main__':
 
     args = cli_parser().parse_args()
     if args.days > 0:

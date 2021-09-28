@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import copy
 import csv
 import io
@@ -19,23 +20,23 @@ def lzip_or_file(filename):
         return open(filename, 'r')
 
 
-if __name__ == '__main__':
-    import argparse
+def cli_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--csv', required=True, type=str, nargs='+')
+    parser.add_argument('--days', required=False, type=int, default=1)
+    parser.add_argument('--limit', required=False, type=int, default=800)
+    parser.add_argument('--minclouds',
+                        required=False,
+                        type=float,
+                        default=0.0)
+    parser.add_argument('--maxclouds',
+                        required=False,
+                        type=float,
+                        default=20.0)
+    return parser
 
-    def cli_parser():
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--csv', required=True, type=str, nargs='+')
-        parser.add_argument('--days', required=False, type=int, default=1)
-        parser.add_argument('--limit', required=False, type=int, default=800)
-        parser.add_argument('--minclouds',
-                            required=False,
-                            type=float,
-                            default=0.0)
-        parser.add_argument('--maxclouds',
-                            required=False,
-                            type=float,
-                            default=20.0)
-        return parser
+
+if __name__ == '__main__':
 
     args = cli_parser().parse_args()
 
