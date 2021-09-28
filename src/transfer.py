@@ -180,7 +180,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
+        'jamesmcclain/algae-classifier:4b16e8e977d825f3a5f4c9ff9660474d691113c1',
         'make_algae_model',
         imagery='sentinel2',
         prescale=args.prescale,
@@ -188,7 +188,10 @@ if __name__ == '__main__':
         backbone_str=args.backbone,
         pretrained=False)
 
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    if args.keep_cheaplab:
+        opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
+    else:
+        opt = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
     ad = AlgaeDataset(savez=args.savez,
@@ -309,7 +312,7 @@ if __name__ == '__main__':
             model.cheaplab = torch.hub.load('jamesmcclain/CheapLab:master',
                                             'make_cheaplab_model',
                                             num_channels=4,
-                                            out_channels=3)
+                                            out_channels=3).to(device)
         else:
             raise Exception(args.imagery)
 
