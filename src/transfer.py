@@ -35,6 +35,11 @@ def cli_parser():
                         required=True,
                         type=str,
                         choices=BACKBONES)
+    parser.add_argument('--imagery',
+                        required=False,
+                        type=str,
+                        default='aviris',
+                        choices=['aviris', 'planet'])
     parser.add_argument('--batch-size', required=False, type=int, default=4096)
     parser.add_argument('--epochs', required=False, type=int, default=2003)
     parser.add_argument('--lr', required=False, type=float, default=1e-4)
@@ -105,13 +110,16 @@ class AlgaeDataset(torch.utils.data.Dataset):
                  savez,
                  ndwi_mask: bool = False,
                  cloud_hack: bool = False,
-                 augment: bool = False):
+                 augment: bool = False,
+                 imagery: str = 'aviris'):
         npz = np.load(savez)
         self.yesno = npz.get('yesno')
         self.yesnos = len(self.yesno)
         self.ndwi_mask = ndwi_mask
         self.cloud_hack = cloud_hack
         self.augment = augment
+        self.imagery = imagery
+        self.band_count = 224 if self.imagery == 'aviris' else 4
         warnings.filterwarnings('ignore')
 
     def __len__(self):
@@ -123,12 +131,23 @@ class AlgaeDataset(torch.utils.data.Dataset):
 
         # Sentinel-2 water mask
         if self.ndwi_mask:
-            ndwi = (data[22] - data[50]) / (data[22] + data[50])
-            data *= (ndwi > 0.0)
+            if self.imagery == 'aviris':
+                ndwi = (data[22] - data[50]) / (data[22] + data[50])
+                data *= (ndwi > 0.0)
+            elif self.imagery == 'planet':
+                ndwi = (data[1] - data[3]) / (data[1] + data[3])
+                data *= (ndwi > 0.0)
+            else:
+                raise Exception(self.imagery)
 
         # Sentinel-2 cloud mask
         if self.cloud_hack:
-            data *= ((data[33] > 600) * (data[33] < 2000))
+            if self.imagery == 'aviris':
+                data *= ((data[33] > 600) * (data[33] < 2000))
+            elif self.imagery == 'planet':
+                data *= ((data[2] > 900) * (data[2] < 4000))
+            else:
+                raise Exception(self.imagery)
 
         # Augmentations
         if self.augment:
@@ -139,9 +158,9 @@ class AlgaeDataset(torch.utils.data.Dataset):
             if np.random.randint(0, 2) == 0:
                 data = np.transpose(data, (0, 2, 1))
             if np.random.randint(0, 5) < 1:
-                data *= (1.0 + ((np.random.rand(224, 1, 1) - 0.5) / 50))
+                data *= (1.0 + ((np.random.rand(self.band_count, 1, 1) - 0.5) / 50))
             if np.random.randint(0, 5) < 1:
-                data *= (1.0 + ((np.random.rand(224, 32, 32) - 0.5) / 500))
+                data *= (1.0 + ((np.random.rand(self.band_count, 32, 32) - 0.5) / 500))
             data = np.rot90(data, k=np.random.randint(0, 4), axes=(1, 2))
             if np.random.randint(0, 2) == 0:
                 data = np.transpose(data, (0, 2, 1))
@@ -175,7 +194,8 @@ if __name__ == '__main__':
     ad = AlgaeDataset(savez=args.savez,
                       ndwi_mask=args.ndwi_mask,
                       cloud_hack=args.cloud_hack,
-                      augment=args.augment)
+                      augment=args.augment,
+                      imagery=args.imagery)
     dl = DataLoader(ad, **dataloader_cfg)
 
     log.info(f'augment={args.augment}')
@@ -202,56 +222,96 @@ if __name__ == '__main__':
         sentinel_tensor = model.cheaplab.indices.conv1.weight.data.cpu().numpy()
         (intermediate, channels, _, _) = sentinel_tensor.shape
         assert (channels == 12)
-        aviris_tensor = np.zeros((intermediate, 224, 1, 1), dtype=np.float32)
-        for i in range(0, intermediate):
-            aviris_tensor[i, 10, 0, 0] = sentinel_tensor[i, 0, 0, 0]
-            aviris_tensor[i, 15, 0, 0] = sentinel_tensor[i, 1, 0, 0]
-            aviris_tensor[i, 22, 0, 0] = sentinel_tensor[i, 2, 0, 0]
-            aviris_tensor[i, 33, 0, 0] = sentinel_tensor[i, 3, 0, 0]
-            aviris_tensor[i, 37, 0, 0] = sentinel_tensor[i, 4, 0, 0]
-            aviris_tensor[i, 41, 0, 0] = sentinel_tensor[i, 5, 0, 0]
-            aviris_tensor[i, 45, 0, 0] = sentinel_tensor[i, 6, 0, 0]
-            aviris_tensor[i, 50, 0, 0] = sentinel_tensor[i, 7, 0, 0]
-            aviris_tensor[i, 62, 0, 0] = sentinel_tensor[i, 8, 0, 0]
-            aviris_tensor[i, 107, 0, 0] = sentinel_tensor[i, 9, 0, 0]
-            aviris_tensor[i, 132, 0, 0] = sentinel_tensor[i, 10, 0, 0]
-            aviris_tensor[i, 193, 0, 0] = sentinel_tensor[i, 11, 0, 0]
-        model.cheaplab.indices.conv1 = torch.nn.Conv2d(224,
-                                                    intermediate,
-                                                    kernel_size=1,
-                                                    padding=0,
-                                                    bias=False)
-        model.cheaplab.indices.conv1.weight.data = torch.tensor(aviris_tensor)
-        model.cheaplab.indices.conv1 = model.cheaplab.indices.conv1.to(device)
+        if args.imagery == 'aviris':
+            aviris_tensor = np.zeros((intermediate, 224, 1, 1), dtype=np.float32)
+            for i in range(0, intermediate):
+                aviris_tensor[i, 10, 0, 0] = sentinel_tensor[i, 0, 0, 0]
+                aviris_tensor[i, 15, 0, 0] = sentinel_tensor[i, 1, 0, 0]
+                aviris_tensor[i, 22, 0, 0] = sentinel_tensor[i, 2, 0, 0]
+                aviris_tensor[i, 33, 0, 0] = sentinel_tensor[i, 3, 0, 0]
+                aviris_tensor[i, 37, 0, 0] = sentinel_tensor[i, 4, 0, 0]
+                aviris_tensor[i, 41, 0, 0] = sentinel_tensor[i, 5, 0, 0]
+                aviris_tensor[i, 45, 0, 0] = sentinel_tensor[i, 6, 0, 0]
+                aviris_tensor[i, 50, 0, 0] = sentinel_tensor[i, 7, 0, 0]
+                aviris_tensor[i, 62, 0, 0] = sentinel_tensor[i, 8, 0, 0]
+                aviris_tensor[i, 107, 0, 0] = sentinel_tensor[i, 9, 0, 0]
+                aviris_tensor[i, 132, 0, 0] = sentinel_tensor[i, 10, 0, 0]
+                aviris_tensor[i, 193, 0, 0] = sentinel_tensor[i, 11, 0, 0]
+            model.cheaplab.indices.conv1 = torch.nn.Conv2d(224,
+                                                           intermediate,
+                                                           kernel_size=1,
+                                                           padding=0,
+                                                           bias=False)
+            model.cheaplab.indices.conv1.weight.data = torch.tensor(aviris_tensor)
+            model.cheaplab.indices.conv1 = model.cheaplab.indices.conv1.to(device)
+        elif args.imagery == 'planet':
+            planet_tensor = np.zeros((intermediate, 4, 1, 1), dtype=np.float32)
+            for i in range(0, intermediate):
+                planet_tensor[i, 0, 0, 0] = sentinel_tensor[i, 1, 0, 0]
+                planet_tensor[i, 1, 0, 0] = sentinel_tensor[i, 2, 0, 0]
+                planet_tensor[i, 2, 0, 0] = sentinel_tensor[i, 3, 0, 0]
+                planet_tensor[i, 3, 0, 0] = sentinel_tensor[i, 8, 0, 0]
+            model.cheaplab.indices.conv1 = torch.nn.Conv2d(4,
+                                                           intermediate,
+                                                           kernel_size=1,
+                                                           padding=0,
+                                                           bias=False)
+            model.cheaplab.indices.conv1.weight.data = torch.tensor(planet_tensor)
+            model.cheaplab.indices.conv1 = model.cheaplab.indices.conv1.to(device)
+        else:
+            raise Exception(args.imagery)
 
         # Modify CheapLab "classifier" portion
         sentinel_tensor = model.cheaplab.classifier[0].conv2d.weight.data.cpu().numpy()
         (intermediate, channels, _, _) = sentinel_tensor.shape
         assert (channels == 44)
-        aviris_tensor = np.zeros((intermediate, 224 + 32, 1, 1), dtype=np.float32)
-        for i in range(0, intermediate):
-            aviris_tensor[i, 32 + 10, 0, 0] = sentinel_tensor[i, 32 + 0, 0, 0]
-            aviris_tensor[i, 32 + 15, 0, 0] = sentinel_tensor[i, 32 + 1, 0, 0]
-            aviris_tensor[i, 32 + 22, 0, 0] = sentinel_tensor[i, 32 + 2, 0, 0]
-            aviris_tensor[i, 32 + 33, 0, 0] = sentinel_tensor[i, 32 + 3, 0, 0]
-            aviris_tensor[i, 32 + 37, 0, 0] = sentinel_tensor[i, 32 + 4, 0, 0]
-            aviris_tensor[i, 32 + 41, 0, 0] = sentinel_tensor[i, 32 + 5, 0, 0]
-            aviris_tensor[i, 32 + 45, 0, 0] = sentinel_tensor[i, 32 + 6, 0, 0]
-            aviris_tensor[i, 32 + 50, 0, 0] = sentinel_tensor[i, 32 + 7, 0, 0]
-            aviris_tensor[i, 32 + 62, 0, 0] = sentinel_tensor[i, 32 + 8, 0, 0]
-            aviris_tensor[i, 32 + 107, 0, 0] = sentinel_tensor[i, 32 + 9, 0, 0]
-            aviris_tensor[i, 32 + 132, 0, 0] = sentinel_tensor[i, 32 + 10, 0, 0]
-            aviris_tensor[i, 32 + 193, 0, 0] = sentinel_tensor[i, 32 + 11, 0, 0]
-        model.cheaplab.classifier[0].conv2d = torch.nn.Conv2d(32 + 224,
-                                                            intermediate,
-                                                            kernel_size=1)
-        model.cheaplab.classifier[0].conv2d.weight.data = torch.tensor(aviris_tensor)
-        model.cheaplab.classifier[0].conv2d = model.cheaplab.classifier[0].conv2d.to(device)
+        if args.imagery == 'aviris':
+            aviris_tensor = np.zeros((intermediate, 32 + 224, 1, 1), dtype=np.float32)
+            for i in range(0, intermediate):
+                aviris_tensor[i, 32 + 10, 0, 0] = sentinel_tensor[i, 32 + 0, 0, 0]
+                aviris_tensor[i, 32 + 15, 0, 0] = sentinel_tensor[i, 32 + 1, 0, 0]
+                aviris_tensor[i, 32 + 22, 0, 0] = sentinel_tensor[i, 32 + 2, 0, 0]
+                aviris_tensor[i, 32 + 33, 0, 0] = sentinel_tensor[i, 32 + 3, 0, 0]
+                aviris_tensor[i, 32 + 37, 0, 0] = sentinel_tensor[i, 32 + 4, 0, 0]
+                aviris_tensor[i, 32 + 41, 0, 0] = sentinel_tensor[i, 32 + 5, 0, 0]
+                aviris_tensor[i, 32 + 45, 0, 0] = sentinel_tensor[i, 32 + 6, 0, 0]
+                aviris_tensor[i, 32 + 50, 0, 0] = sentinel_tensor[i, 32 + 7, 0, 0]
+                aviris_tensor[i, 32 + 62, 0, 0] = sentinel_tensor[i, 32 + 8, 0, 0]
+                aviris_tensor[i, 32 + 107, 0, 0] = sentinel_tensor[i, 32 + 9, 0, 0]
+                aviris_tensor[i, 32 + 132, 0, 0] = sentinel_tensor[i, 32 + 10, 0, 0]
+                aviris_tensor[i, 32 + 193, 0, 0] = sentinel_tensor[i, 32 + 11, 0, 0]
+            model.cheaplab.classifier[0].conv2d = torch.nn.Conv2d(32 + 224,
+                                                                  intermediate,
+                                                                  kernel_size=1)
+            model.cheaplab.classifier[0].conv2d.weight.data = torch.tensor(aviris_tensor)
+            model.cheaplab.classifier[0].conv2d = model.cheaplab.classifier[0].conv2d.to(device)
+        elif args.imagery == 'planet':
+            planet_tensor = np.zeros((intermediate, 32 + 4, 1, 1), dtype=np.float32)
+            for i in range(0, intermediate):
+                planet_tensor[i, 32 + 0, 0, 0] = sentinel_tensor[i, 32 + 1, 0, 0]
+                planet_tensor[i, 32 + 1, 0, 0] = sentinel_tensor[i, 32 + 2, 0, 0]
+                planet_tensor[i, 32 + 2, 0, 0] = sentinel_tensor[i, 32 + 3, 0, 0]
+                planet_tensor[i, 32 + 3, 0, 0] = sentinel_tensor[i, 32 + 8, 0, 0]
+            model.cheaplab.classifier[0].conv2d = torch.nn.Conv2d(32 + 4,
+                                                                  intermediate,
+                                                                  kernel_size=1)
+            model.cheaplab.classifier[0].conv2d.weight.data = torch.tensor(planet_tensor)
+            model.cheaplab.classifier[0].conv2d = model.cheaplab.classifier[0].conv2d.to(device)
+        else:
+            raise Exception(args.imagery)
     else:
-        model.cheaplab = torch.hub.load('jamesmcclain/CheapLab:master',
-                                        'make_cheaplab_model',
-                                        num_channels=224,
-                                        out_channels=3)
+        if args.imagery == 'aviris':
+            model.cheaplab = torch.hub.load('jamesmcclain/CheapLab:master',
+                                            'make_cheaplab_model',
+                                            num_channels=224,
+                                            out_channels=3)
+        elif args.imagery == 'planet':
+            model.cheaplab = torch.hub.load('jamesmcclain/CheapLab:master',
+                                            'make_cheaplab_model',
+                                            num_channels=4,
+                                            out_channels=3)
+        else:
+            raise Exception(args.imagery)
 
     model.to(device)
 
