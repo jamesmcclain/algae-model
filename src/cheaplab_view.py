@@ -26,7 +26,7 @@ def cli_parser():
                         required=False,
                         type=str,
                         default='sentinel2',
-                        choices=['aviris', 'sentinel2'])
+                        choices=['aviris', 'sentinel2', 'planet'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
     parser.add_argument('--outfile', required=True, type=str, nargs='+')
     parser.add_argument('--prescale', required=False, type=int, default=1)
@@ -82,9 +82,12 @@ if __name__ == '__main__':
                 'count': 3,
                 'bigtiff': 'yes',
                 'sparse_ok': 'yes',
+                'tiled': 'yes'
             })
             width = infile_ds.width
             height = infile_ds.height
+            bandcount = infile_ds.count
+
             data_out = torch.zeros((3, height, width),
                                 dtype=torch.float32).to(device)
 
@@ -92,6 +95,15 @@ if __name__ == '__main__':
                 indexes = list(range(1, 224 + 1))
             elif args.imagery == 'sentinel2':
                 indexes = list(range(1, 12 + 1))
+            elif args.imagery == 'planet':
+                if bandcount == 4:
+                    indexes = [1, 2, 3, 4]
+                elif bandcount == 5:
+                    indexes = [1, 2, 3, 5]
+                else:
+                    raise Exception(f'bands={bandcount}')
+            else:
+                raise Exception(f'imagery={args.imagery}')
 
             # Gather up batches
             batches = []
@@ -145,4 +157,3 @@ if __name__ == '__main__':
         # Write results to file
         with rio.open(outfile, 'w', **out_raw_profile) as outfile_raw_ds:
             outfile_raw_ds.write(data_out)
-        print()
