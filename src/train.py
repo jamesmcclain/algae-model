@@ -178,7 +178,7 @@ if __name__ == '__main__':
     dataloader_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
-    model = torch.hub.load('jamesmcclain/algae-classifier:b1afcfe5ea32f937ccdbde5751a57c1dbe17ec13',
+    model = torch.hub.load('jamesmcclain/algae-classifier:4b16e8e977d825f3a5f4c9ff9660474d691113c1',
                            'make_algae_model',
                            imagery=args.imagery,
                            prescale=args.prescale,

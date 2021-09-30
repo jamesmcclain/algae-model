@@ -2,14 +2,16 @@
 
 import csv
 from datetime import datetime
+import argparse
+
+
+def cli_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--csv', required=True, type=str, nargs='+')
+    return parser
+
 
 if __name__ == '__main__':
-    import argparse
-
-    def cli_parser():
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--csv', required=True, type=str, nargs='+')
-        return parser
 
     args = cli_parser().parse_args()
 

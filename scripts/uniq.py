@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 
+import argparse
 import copy
 import json
 
-if __name__ == '__main__':
-    import argparse
 
-    def cli_parser():
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--subresults', required=True, type=str, nargs='+')
-        parser.add_argument('--result', required=True, type=str)
-        return parser
+def cli_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--subresults', required=True, type=str, nargs='+')
+    parser.add_argument('--result', required=True, type=str)
+    return parser
+
+
+if __name__ == '__main__':
 
     args = cli_parser().parse_args()
 

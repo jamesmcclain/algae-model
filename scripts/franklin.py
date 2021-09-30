@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import argparse
 import csv
 import io
 import itertools
@@ -17,15 +18,15 @@ def lzip_or_file(filename):
         return open(filename, 'r')
 
 
-if __name__ == '__main__':
-    import argparse
+def cli_parser():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--csv', required=True, type=str, nargs='+')
+    parser.add_argument('--days', required=False, type=int, default=1)
+    return parser
 
+
+if __name__ == '__main__':
     # curl -d ... -H 'Content-Type: application/json' https://franklin.nasa-hsi.azavea.com/search/
-    def cli_parser():
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--csv', required=True, type=str, nargs='+')
-        parser.add_argument('--days', required=False, type=int, default=1)
-        return parser
 
     args = cli_parser().parse_args()
 

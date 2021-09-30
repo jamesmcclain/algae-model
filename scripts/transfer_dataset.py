@@ -23,6 +23,10 @@ def cli_parser():
     parser.add_argument('--savez', required=True, type=str)
     parser.add_argument('--scenes', required=True, type=str, nargs='+')
     parser.add_argument('--window-size', required=False, type=int, default=32)
+
+    parser.add_argument('--planet', dest='planet', action='store_true')
+    parser.set_defaults(schedule=False)
+
     return parser
 
 
@@ -49,6 +53,8 @@ if __name__ == '__main__':
                     window = rasterio.windows.Window(x, y, n, n)
                     data = ds.read(window=window).astype(np.float32)
                     if data.sum() != 0:
+                        if args.planet and data.shape[0] == 5:
+                            data = data[[0, 1, 2, 4]]
                         data = data.transpose((1, 2, 0))
                         yesno.append(data)
                         break
