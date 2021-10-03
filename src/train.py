@@ -29,11 +29,10 @@ BACKBONES = [
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone',
-                        required=True,
-                        type=str,
-                        choices=BACKBONES)
-    parser.add_argument('--batch-size', required=False, type=int, default=128)
+    parser.add_argument('--backbone', required=True, type=str, choices=BACKBONES)
+    parser.add_argument('--classification-batch-size', required=False, type=int, default=128)
+    parser.add_argument('--unlabeled-batch-size', required=False, type=int, default=4096)
+    parser.add_argument('--classification-savezs', required=True, type=str, nargs='+')
     parser.add_argument('--epochs1', required=False, type=int, default=33)
     parser.add_argument('--epochs2', required=False, type=int, default=2003)
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
@@ -43,7 +42,6 @@ def cli_parser():
     parser.add_argument('--pth-cheaplab-donor', required=False, type=str, default=None)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
-    parser.add_argument('--classification-savezs', required=True, type=str, nargs='+')
     parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w1', required=False, type=float, default=0.0)
 
@@ -73,7 +71,14 @@ def worker_init_fn(x):
     np.random.seed(42 + x)
 
 
-dataloader_cfg = {
+dataloader1_cfg = {
+    'batch_size': None,
+    'num_workers': None,
+    'shuffle': True,
+    'worker_init_fn': worker_init_fn
+}
+
+dataloader2_cfg = {
     'batch_size': None,
     'num_workers': None,
     'shuffle': True,
@@ -113,8 +118,11 @@ if __name__ == '__main__':
     logging.basicConfig(stream=sys.stderr, level=logging.INFO)
     log = logging.getLogger()
 
-    dataloader_cfg['batch_size'] = args.batch_size
-    dataloader_cfg['num_workers'] = args.num_workers
+    dataloader1_cfg['batch_size'] = args.classification_batch_size
+    dataloader1_cfg['num_workers'] = args.num_workers
+
+    dataloader2_cfg['batch_size'] = args.unlabeled_batch_size
+    dataloader2_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
     model = torch.hub.load(
@@ -143,10 +151,10 @@ if __name__ == '__main__':
                                     ndwi_mask=args.ndwi_mask,
                                     cloud_hack=args.cloud_hack,
                                     augment=True)
-    dl = DataLoader(ad, **dataloader_cfg)
+    dl1 = DataLoader(ad, **dataloader1_cfg)
 
     log.info(f'backbone={args.backbone}')
-    log.info(f'batch-size={args.batch_size}')
+    log.info(f'classification-batch-size={args.classification_batch_size}')
     log.info(f'classification-savezs={args.classification_savezs}')
     log.info(f'cloud-hack={args.cloud_hack}')
     log.info(f'epochs1={args.epochs1}')
@@ -171,7 +179,7 @@ if __name__ == '__main__':
             losses = []
             constraints = []
             entropies = []
-            for (i, batch) in enumerate(dl):
+            for (i, batch) in enumerate(dl1):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out)
@@ -195,7 +203,7 @@ if __name__ == '__main__':
             losses = []
             constraints = []
             entropies = []
-            for (i, batch) in enumerate(dl):
+            for (i, batch) in enumerate(dl1):
                 out = model(batch[0].float().to(device)).squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out)
@@ -228,7 +236,7 @@ if __name__ == '__main__':
         losses = []
         constraints = []
         entropies = []
-        for (i, batch) in enumerate(dl):
+        for (i, batch) in enumerate(dl1):
             out = model(batch[0].float().to(device)).squeeze()
             constraint = obj(out, batch[1].float().to(device))
             entropy = entropy_function(out)
@@ -259,7 +267,7 @@ if __name__ == '__main__':
     fp = 0.0
     fn = 0.0
     with torch.no_grad():
-        for (i, batch) in enumerate(dl):
+        for (i, batch) in enumerate(dl1):
             pred = torch.sigmoid(model(batch[0].float().to(device))).squeeze()
             pred = (pred > 0.5).detach().cpu().numpy().astype(np.uint8)
             gt = batch[1].detach().cpu().numpy().astype(np.uint8)
