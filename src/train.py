@@ -17,6 +17,8 @@ from torch.utils.data import DataLoader
 from torchvision.io import VideoReader
 from torchvision.transforms.functional import F_t
 
+from typing import List
+
 BACKBONES = [
     'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
@@ -42,7 +44,7 @@ def cli_parser():
     parser.add_argument('--pth-cheaplab-donor', required=False, type=str, default=None)
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
-    parser.add_argument('--savez', required=True, type=str)
+    parser.add_argument('--classification-savezs', required=True, type=str, nargs='+')
     parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w1', required=False, type=float, default=0.0)
 
@@ -108,28 +110,44 @@ def entropy_function(x):
 
 class AlgaeClassificationDataset(torch.utils.data.Dataset):
     def __init__(self,
-                 savez,
+                 savezs: List[str],
                  ndwi_mask: bool = False,
                  cloud_hack: bool = False,
                  augment: bool = False):
-        npz = np.load(savez)
-        self.yes = npz.get('yes')
-        self.no = npz.get('no')
-        self.yeas = self.yes.shape[-1]
-        self.nays = self.no.shape[-1]
+        self.yes = []
+        self.no = []
+        self.yeas = []
+        self.nays = []
+        for savez in savezs:
+            npz = np.load(savez)
+            self.yes.append(npz.get('yes'))
+            self.yeas.append(self.yes[-1].shape[-1])
+            self.no.append(npz.get('no'))
+            self.nays.append(self.no[-1].shape[-1])
         self.ndwi_mask = ndwi_mask
         self.cloud_hack = cloud_hack
         self.augment = augment
         warnings.filterwarnings('ignore')
 
     def __len__(self):
-        return self.yeas + self.nays
+        n = 0
+        for yeas in self.yeas:
+            n += yeas
+        for nays in self.nays:
+            n += nays
+        return n
 
     def __getitem__(self, idx):
-        if idx < self.yeas:
-            data, label = self.yes[..., idx], 1
-        else:
-            data, label = self.no[..., idx - self.yeas], 0
+        for ((yeas, nays), (yes, no)) in zip(zip(self.yeas, self.nays), zip(self.yes, self.no)):
+            if idx < yeas:
+                data, label = yes[..., idx], 1
+                break
+            idx -= yeas
+            if idx < nays:
+                data, label = no[..., idx], 0
+                break
+            idx -= nays
+
         data = data.transpose((2, 0, 1))
         n = data.shape[-3]
 
@@ -201,12 +219,14 @@ if __name__ == '__main__':
                 state.pop(key)
         model.load_state_dict(state, strict=False)
 
+    for cheaplab in model.cheaplab.values():
+        cheaplab.to(device)
     model.to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr1)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
-    ad = AlgaeClassificationDataset(savez=args.savez,
+    ad = AlgaeClassificationDataset(savezs=args.classification_savezs,
                                     ndwi_mask=args.ndwi_mask,
                                     cloud_hack=args.cloud_hack,
                                     augment=True)
@@ -214,6 +234,7 @@ if __name__ == '__main__':
 
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
+    log.info(f'classification-savezs={args.classification_savezs}')
     log.info(f'cloud-hack={args.cloud_hack}')
     log.info(f'epochs1={args.epochs1}')
     log.info(f'epochs2={args.epochs2}')
@@ -223,7 +244,6 @@ if __name__ == '__main__':
     log.info(f'pretrained={args.pretrained}')
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
-    log.info(f'savez={args.savez}')
     log.info(f'schedule={args.schedule}')
 
     log.info(f'parameter lr1: {args.lr1}')
@@ -280,11 +300,9 @@ if __name__ == '__main__':
     else:
         log.info(f'Loading model from {args.pth_load}')
         model.load_state_dict(torch.load(args.pth_load))
-
-    # to device
-    for cheaplab in model.cheaplab.values():
-        cheaplab.to(device)
-    model.to(device)
+        for cheaplab in model.cheaplab.values():
+            cheaplab.to(device)
+        model.to(device)
 
     log.info('Training everything')
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr2)
@@ -316,8 +334,7 @@ if __name__ == '__main__':
         mean_loss = np.mean(losses)
         mean_constraint = np.mean(constraints)
         mean_entropy = np.mean(entropies)
-        log.info(
-            f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
+        log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
