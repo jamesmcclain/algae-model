@@ -35,10 +35,6 @@ def cli_parser():
     parser.add_argument('--batch-size', required=False, type=int, default=128)
     parser.add_argument('--epochs1', required=False, type=int, default=33)
     parser.add_argument('--epochs2', required=False, type=int, default=2003)
-    parser.add_argument('--imagery',
-                        required=False,
-                        choices=['aviris', 'sentinel2'],
-                        default='sentinel2')
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
     parser.add_argument('--lr2', required=False, type=float, default=1e-5)
     parser.add_argument('--num-workers', required=False, type=int, default=0)
@@ -60,9 +56,6 @@ def cli_parser():
                         dest='cloud_hack',
                         action='store_false')
     parser.set_defaults(cloud_hack=True)
-
-    parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
-    parser.set_defaults(cheaplab=True)
 
     parser.add_argument('--no-schedule', dest='schedule', action='store_false')
     parser.set_defaults(schedule=True)
@@ -113,7 +106,7 @@ def entropy_function(x):
             (pno_narrow * torch.log(pno_wide)))
 
 
-class AlgaeDataset(torch.utils.data.Dataset):
+class AlgaeClassificationDataset(torch.utils.data.Dataset):
     def __init__(self,
                  savez,
                  ndwi_mask: bool = False,
@@ -138,15 +131,30 @@ class AlgaeDataset(torch.utils.data.Dataset):
         else:
             data, label = self.no[..., idx - self.yeas], 0
         data = data.transpose((2, 0, 1))
+        n = data.shape[-3]
 
-        # Sentinel-2 water mask
+        # Water Mask
         if self.ndwi_mask:
-            ndwi = (data[2] - data[7]) / (data[2] + data[7])
+            if n == 4:
+                ndwi = (data[2] - data[7]) / (data[2] + data[7])
+            elif n == 12:
+                ndwi = (data[2] - data[7]) / (data[2] + data[7])
+            elif n == 224:
+                ndwi = (data[22] - data[50]) / (data[22] + data[50])
+            else:
+                raise Exception(f"Don't know how to do NDWI on {n} bands")
             data *= (ndwi > 0.0)
 
-        # Sentinel-2 cloud mask
+        # Cloud Hack
         if self.cloud_hack:
-            data *= ((data[3] > 100) * (data[3] < 1000))
+            if n == 4:
+                data *= ((data[2] > 900) * (data[2] < 4000))
+            elif n == 12:
+                data *= ((data[3] > 100) * (data[3] < 1000))
+            elif n == 224:
+                data *= ((data[33] > 600) * (data[33] < 2000))
+            else:
+                raise Exception(f"Don't know how to do cloud hack on {n} bands")
 
         # Augmentations
         if self.augment:
@@ -178,13 +186,13 @@ if __name__ == '__main__':
     dataloader_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
-    model = torch.hub.load('jamesmcclain/algae-classifier:4b16e8e977d825f3a5f4c9ff9660474d691113c1',
-                           'make_algae_model',
-                           imagery=args.imagery,
-                           prescale=args.prescale,
-                           use_cheaplab=args.cheaplab,
-                           backbone_str=args.backbone,
-                           pretrained=args.pretrained)
+    model = torch.hub.load(
+        'jamesmcclain/algae-classifier:e8f671fa063e9d7575040fe93fde306210f160e7',
+        'make_algae_model',
+        in_channels=[4, 12, 224],
+        prescale=args.prescale,
+        backbone_str=args.backbone,
+        pretrained=args.pretrained)
 
     if args.pth_cheaplab_donor:
         state = torch.load(args.pth_cheaplab_donor)
@@ -198,24 +206,21 @@ if __name__ == '__main__':
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr1)
     obj = torch.nn.BCEWithLogitsLoss().to(device)
 
-    ad = AlgaeDataset(savez=args.savez,
-                      ndwi_mask=(args.ndwi_mask and args.imagery == 'sentinel2'),
-                      cloud_hack=(args.cloud_hack and args.imagery == 'sentinel2'),
-                      augment=(args.imagery == 'sentinel2'))
+    ad = AlgaeClassificationDataset(savez=args.savez,
+                                    ndwi_mask=args.ndwi_mask,
+                                    cloud_hack=args.cloud_hack,
+                                    augment=True)
     dl = DataLoader(ad, **dataloader_cfg)
 
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
-    log.info(f'cheaplab={args.cheaplab}')
     log.info(f'cloud-hack={args.cloud_hack}')
     log.info(f'epochs1={args.epochs1}')
     log.info(f'epochs2={args.epochs2}')
-    log.info(f'imagery={args.imagery}')
     log.info(f'ndwi-mask={args.ndwi_mask}')
     log.info(f'num-workers={args.num_workers}')
     log.info(f'prescale={args.prescale}')
     log.info(f'pretrained={args.pretrained}')
-    log.info(f'pth-cheaplab-donor={args.pth_cheaplab_donor}')
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'savez={args.savez}')
@@ -229,8 +234,6 @@ if __name__ == '__main__':
     if args.pth_load is None:
         log.info('Training everything')
         unfreeze(model)
-        # if args.cheaplab and not args.pth_cheaplab_donor:
-        #     freeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
@@ -255,8 +258,6 @@ if __name__ == '__main__':
         freeze(model)
         unfreeze(model.first)
         unfreeze(model.last)
-        # if args.cheaplab and not args.pth_cheaplab_donor:
-        #     freeze(model.cheaplab)
         for epoch in range(0, args.epochs1):
             losses = []
             constraints = []
@@ -279,13 +280,18 @@ if __name__ == '__main__':
     else:
         log.info(f'Loading model from {args.pth_load}')
         model.load_state_dict(torch.load(args.pth_load))
-        model.to(device)
+
+    # to device
+    for cheaplab in model.cheaplab.values():
+        cheaplab.to(device)
+    model.to(device)
 
     log.info('Training everything')
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr2)
     if args.epochs2 > 0:
-        sched = torch.optim.lr_scheduler.OneCycleLR(
-            opt, max_lr=args.lr2, total_steps=args.epochs2)
+        sched = torch.optim.lr_scheduler.OneCycleLR(opt,
+                                                    max_lr=args.lr2,
+                                                    total_steps=args.epochs2)
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         losses = []
@@ -310,7 +316,8 @@ if __name__ == '__main__':
         mean_loss = np.mean(losses)
         mean_constraint = np.mean(constraints)
         mean_entropy = np.mean(entropies)
-        log.info(f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
+        log.info(
+            f'epoch={epoch} loss={mean_loss} entropy={mean_entropy} constraint={mean_constraint}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
