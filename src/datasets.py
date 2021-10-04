@@ -13,7 +13,7 @@ def water_mask(data, n):
     elif n == 224:
         ndwi = (data[22] - data[50]) / (data[22] + data[50])
     else:
-        raise Exception(self.imagery)
+        raise Exception(n)
     return ndwi
 
 
@@ -25,7 +25,7 @@ def cloud_hack(data, n):
     elif n == 224:
         not_cloud = ((data[33] > 600) * (data[33] < 2000))
     else:
-        raise Exception(self.imagery)
+        raise Exception(n)
     return not_cloud
 
 
@@ -62,7 +62,6 @@ class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
         self.ndwi_mask = ndwi_mask
         self.cloud_hack = cloud_hack
         self.augment = augment
-        self.imagery = imagery
         warnings.filterwarnings('ignore')
 
     def __len__(self):
