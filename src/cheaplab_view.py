@@ -17,26 +17,14 @@ from rasterio.windows import Window
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--chunksize', required=False, type=int, default=2048)
-    parser.add_argument('--device',
-                        required=False,
-                        type=str,
-                        default='cuda',
-                        choices=['cuda', 'cpu'])
-    parser.add_argument('--imagery',
-                        required=False,
-                        type=str,
-                        default='sentinel2',
-                        choices=['aviris', 'sentinel2', 'planet'])
+    parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
     parser.add_argument('--outfile', required=True, type=str, nargs='+')
     parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--window-size', required=False, type=int, default=32)
 
-    parser.add_argument('--ndwi-mask',
-                        required=False,
-                        dest='ndwi_mask',
-                        action='store_true')
+    parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
     parser.add_argument('--no-cloud-hack', dest='cloud_hack', action='store_false')
@@ -56,11 +44,10 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:4b16e8e977d825f3a5f4c9ff9660474d691113c1',
+    model = torch.hub.load('jamesmcclain/algae-classifier:ee445e3bf5beee56a47d2d23a6c69aa627dc3679',
                            'make_algae_model',
-                           imagery=args.imagery,
+                           in_channels=[4, 12, 224],
                            prescale=args.prescale,
-                           use_cheaplab=True,
                            backbone_str='resnet18',
                            pretrained=False)
     state = torch.load(args.pth_load)
@@ -91,19 +78,20 @@ if __name__ == '__main__':
             data_out = torch.zeros((3, height, width),
                                 dtype=torch.float32).to(device)
 
-            if args.imagery == 'aviris':
+            if bandcount == 224:
                 indexes = list(range(1, 224 + 1))
-            elif args.imagery == 'sentinel2':
+            elif bandcount in {12, 13}:
                 indexes = list(range(1, 12 + 1))
-            elif args.imagery == 'planet':
-                if bandcount == 4:
-                    indexes = [1, 2, 3, 4]
-                elif bandcount == 5:
-                    indexes = [1, 2, 3, 5]
-                else:
-                    raise Exception(f'bands={bandcount}')
+                # XXX 13 bands does not indicate L1C support, this is
+                # for Franklin COGs that have an extra band.
+                bandcount = 12
+            elif bandcount == 4:
+                indexes = list(range(1, 4 + 1))
+            elif bandcount == 5:
+                indexes = [1, 2, 3, 5]
+                bandcount = 4
             else:
-                raise Exception(f'imagery={args.imagery}')
+                raise Exception(f'bands={bandcount}')
 
             # Gather up batches
             batches = []
@@ -122,7 +110,7 @@ if __name__ == '__main__':
                     for (i, j) in batch
                 ]
                 windows = [w.astype(np.float32) for w in windows]
-                if args.imagery == 'sentinel2':
+                if bandcount == 12:
                     if args.ndwi_mask:
                         windows = [
                             w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
@@ -130,7 +118,7 @@ if __name__ == '__main__':
                         ]
                     if args.cloud_hack:
                         windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
-                elif args.imagery == 'aviris':
+                elif bandcount == 224:
                     if args.ndwi_mask:
                         windows = [
                             w * (((w[22] - w[50]) / (w[22] + w[50])) > 0.0)
@@ -138,6 +126,14 @@ if __name__ == '__main__':
                         ]
                     if args.cloud_hack:
                         windows = [(w * (w[33] > 600) * (w[33] < 2000)) for w in windows]
+                elif bandcount == 4:
+                    if args.ndwi_mask:
+                        windows = [
+                            w * (((w[1] - w[3]) / (w[1] + w[3])) > 0.0)
+                            for w in windows
+                        ]
+                    if args.cloud_hack:
+                        windows = [(w * (w[2] > 900) * (w[2] < 4000)) for w in windows]
 
                 try:
                     windows = np.stack(windows, axis=0)
@@ -146,7 +142,7 @@ if __name__ == '__main__':
                 if windows.sum() == 0:
                     continue
                 windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
-                prob = torch.sigmoid(model(windows))
+                prob = torch.sigmoid(model[str(bandcount)](windows))
 
                 for k, (i, j) in enumerate(batch):
                     data_out[:, j:(j + n), i:(i + n)] = prob[k]
