@@ -24,39 +24,21 @@ BACKBONES = [
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--backbone',
-                        required=True,
-                        type=str,
-                        choices=BACKBONES)
-    parser.add_argument('--chunksize', required=False, type=int, default=2048)
-    parser.add_argument('--device',
-                        required=False,
-                        type=str,
-                        default='cuda',
-                        choices=['cuda', 'cpu'])
-    parser.add_argument('--imagery',
-                        required=False,
-                        type=str,
-                        default='sentinel2',
-                        choices=['aviris', 'sentinel2'])
-    parser.add_argument('--infile', required=True, type=str)
-    parser.add_argument('--outfile', required=True, type=str)
+    parser.add_argument('--backbone', required=True, type=str, choices=BACKBONES)
+    parser.add_argument('--chunksize', required=False, type=int, default=256)
+    parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
+    parser.add_argument('--infile', required=True, type=str, nargs='+')
+    parser.add_argument('--outfile', required=True, type=str, nargs='+')
     parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--stride', required=False, type=int, default=13)
     parser.add_argument('--window-size', required=False, type=int, default=32)
 
-    parser.add_argument('--ndwi-mask',
-                        required=False,
-                        dest='ndwi_mask',
-                        action='store_true')
+    parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
     parser.add_argument('--no-cloud-hack', dest='cloud_hack', action='store_false')
     parser.set_defaults(cloud_hack=True)
-
-    parser.add_argument('--no-cheaplab', dest='cheaplab', action='store_false')
-    parser.set_defaults(cheaplab=True)
 
     return parser
 
@@ -66,84 +48,94 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
 
     args = cli_parser().parse_args()
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format='%(asctime)-15s %(message)s')
     log = logging.getLogger()
 
+    n = args.window_size
+
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:4b16e8e977d825f3a5f4c9ff9660474d691113c1',
+    model = torch.hub.load('jamesmcclain/algae-classifier:6b66efed714b4d8da583b3ee162be79c81ff0594',
                            'make_algae_model',
-                           imagery=args.imagery,
+                           in_channels=[4, 12, 224],
                            prescale=args.prescale,
-                           use_cheaplab=args.cheaplab,
                            backbone_str=args.backbone,
                            pretrained=False)
     model.load_state_dict(torch.load(args.pth_load))
     model.to(device)
     model.eval()
 
-    with rio.open(args.infile, 'r') as infile_ds, torch.no_grad():
-        out_raw_profile = copy.deepcopy(infile_ds.profile)
-        out_raw_profile.update({
-            'compress': 'lzw',
-            'dtype': np.float32,
-            'count': 1,
-            'bigtiff': 'yes',
-        })
-        width = infile_ds.width
-        height = infile_ds.height
-        ar_out = torch.zeros((1, height, width),
-                             dtype=torch.float32).to(device)
-        pixel_hits = torch.zeros((1, height, width),
-                                 dtype=torch.uint8).to(device)
+    for (infile, outfile) in zip(args.infile, args.outfile):
+        with rio.open(infile, 'r') as infile_ds, torch.no_grad():
+            out_raw_profile = copy.deepcopy(infile_ds.profile)
+            out_raw_profile.update({
+                'compress': 'lzw',
+                'dtype': np.float32,
+                'count': 1,
+                'bigtiff': 'yes',
+                'sparse_ok': 'yes',
+                'tiled': 'yes',
+            })
+            width = infile_ds.width
+            height = infile_ds.height
+            bandcount = infile_ds.count
+            ar_out = torch.zeros((1, height, width), dtype=torch.float32).to(device)
+            pixel_hits = torch.zeros((1, height, width), dtype=torch.uint8).to(device)
 
-        if args.imagery == 'aviris':
-            indexes = list(range(1, 224 + 1))
-        elif args.imagery == 'sentinel2':
-            indexes = list(range(1, 12 + 1))
-        n = args.window_size
+            if bandcount == 224:
+                indexes = list(range(1, 224 + 1))
+            elif bandcount in {12, 13}:
+                indexes = list(range(1, 12 + 1))
+                # NOTE: 13 bands does not indicate L1C support, this is
+                # for Franklin COGs that have an extra band.
+                bandcount = 12
+            elif bandcount == 4:
+                indexes = list(range(1, 4 + 1))
+            elif bandcount == 5:
+                indexes = [1, 2, 3, 5]
+                bandcount = 4
+            else:
+                raise Exception(f'bands={bandcount}')
 
-        # gather up batches
-        batches = []
-        for i in range(0, width - n, args.stride):
-            for j in range(0, height - n, args.stride):
-                batches.append((i, j))
-        batches = [
-            batches[i:i + args.chunksize]
-            for i in range(0, len(batches), args.chunksize)
-        ]
-
-        for batch in tqdm.tqdm(batches):
-            windows = [
-                infile_ds.read(indexes, window=Window(i, j, n, n))
-                for (i, j) in batch
+            # gather up batches
+            batches = []
+            for i in range(0, width - n, args.stride):
+                for j in range(0, height - n, args.stride):
+                    batches.append((i, j))
+            batches = [
+                batches[i:i + args.chunksize]
+                for i in range(0, len(batches), args.chunksize)
             ]
-            windows = [w.astype(np.float32) for w in windows]
-            if args.ndwi_mask:
+
+            for batch in tqdm.tqdm(batches):
                 windows = [
-                    w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
-                    for w in windows
+                    infile_ds.read(indexes, window=Window(i, j, n, n))
+                    for (i, j) in batch
                 ]
-            if args.cloud_hack:
-                windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
+                windows = [w.astype(np.float32) for w in windows]
+                if args.ndwi_mask:
+                    windows = [
+                        w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
+                        for w in windows
+                    ]
+                if args.cloud_hack:
+                    windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
 
-            try:
-                windows = np.stack(windows, axis=0)
-            except:
-                continue
-            windows = torch.from_numpy(windows).to(dtype=torch.float32,
-                                                   device=device)
-            prob = torch.sigmoid(model(windows))
+                try:
+                    windows = np.stack(windows, axis=0)
+                except:
+                    continue
+                windows = torch.from_numpy(windows).to(dtype=torch.float32,
+                                                    device=device)
+                prob = torch.sigmoid(model(windows))
 
-            for k, (i, j) in enumerate(batch):
-                ar_out[0, j:(j + n), i:(i + n)] += prob[k]
-                pixel_hits[0, j:(j + n), i:(i + n)] += 1
+                for k, (i, j) in enumerate(batch):
+                    ar_out[0, j:(j + n), i:(i + n)] += prob[k]
+                    pixel_hits[0, j:(j + n), i:(i + n)] += 1
 
-    # Bring results back to CPU
-    ar_out /= pixel_hits
-    ar_out = ar_out.cpu().numpy()
+        # Bring results back to CPU
+        ar_out /= pixel_hits
+        ar_out = ar_out.cpu().numpy()
 
-    # Write results to file
-    with rio.open(args.outfile, 'w', **out_raw_profile) as outfile_raw_ds:
-        outfile_raw_ds.write(ar_out[0],
-                             indexes=1,
-                             window=Window(0, 0, width, height))
+        # Write results to file
+        with rio.open(outfile, 'w', **out_raw_profile) as outfile_raw_ds:
+            outfile_raw_ds.write(ar_out[0], indexes=1)
