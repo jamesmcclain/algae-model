@@ -16,7 +16,7 @@ from rasterio.windows import Window
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--chunksize', required=False, type=int, default=2048)
+    parser.add_argument('--chunksize', required=False, type=int, default=256)
     parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
     parser.add_argument('--outfile', required=True, type=str, nargs='+')
@@ -38,13 +38,13 @@ if __name__ == '__main__':
     warnings.filterwarnings('ignore')
 
     args = cli_parser().parse_args()
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format='%(asctime)-15s %(message)s')
     log = logging.getLogger()
 
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:ee445e3bf5beee56a47d2d23a6c69aa627dc3679',
+    model = torch.hub.load('jamesmcclain/algae-classifier:6b66efed714b4d8da583b3ee162be79c81ff0594',
                            'make_algae_model',
                            in_channels=[4, 12, 224],
                            prescale=args.prescale,
@@ -59,7 +59,6 @@ if __name__ == '__main__':
     model.to(device)
     model.eval()
 
-    # Read data
     for (infile, outfile) in zip(args.infile, args.outfile):
         with rio.open(infile, 'r') as infile_ds, torch.no_grad():
             out_raw_profile = copy.deepcopy(infile_ds.profile)
@@ -69,7 +68,7 @@ if __name__ == '__main__':
                 'count': 3,
                 'bigtiff': 'yes',
                 'sparse_ok': 'yes',
-                'tiled': 'yes'
+                'tiled': 'yes',
             })
             width = infile_ds.width
             height = infile_ds.height
@@ -82,8 +81,8 @@ if __name__ == '__main__':
                 indexes = list(range(1, 224 + 1))
             elif bandcount in {12, 13}:
                 indexes = list(range(1, 12 + 1))
-                # XXX 13 bands does not indicate L1C support, this is
-                # for Franklin COGs that have an extra band.
+                # NOTE: 13 bands does not indicate L1C support, this
+                # is for Franklin COGs that have an extra band.
                 bandcount = 12
             elif bandcount == 4:
                 indexes = list(range(1, 4 + 1))

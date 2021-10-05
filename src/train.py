@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:ee445e3bf5beee56a47d2d23a6c69aa627dc3679',
+        'jamesmcclain/algae-classifier:6b66efed714b4d8da583b3ee162be79c81ff0594',
         'make_algae_model',
         in_channels=[4, 12, 224],
         prescale=args.prescale,
