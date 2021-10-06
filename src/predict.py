@@ -18,7 +18,8 @@ BACKBONES = [
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
     'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
     'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
-    'efficientnet_b6', 'efficientnet_b7'
+    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34',
+    'fpn_resnet50'
 ]
 
 
@@ -28,7 +29,7 @@ def cli_parser():
     parser.add_argument('--chunksize', required=False, type=int, default=256)
     parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
-    parser.add_argument('--outfile', required=True, type=str, nargs='+')
+    parser.add_argument('--outfile', required=False, default=None, type=str, nargs='+')
     parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--stride', required=False, type=int, default=13)
@@ -64,7 +65,18 @@ if __name__ == '__main__':
     model.to(device)
     model.eval()
 
+    if args.outfile is None:
+        model_name = args.pth_load.split('/')[-1].split('.')[0]
+        def transmute(filename):
+            filename = filename.split('/')[-1]
+            filename = f"./predict-{model_name}-{filename}"
+            if not filename.endswith('.tiff'):
+                filename = filename.replace('.tif', '.tiff')
+            return filename
+        args.outfile = [transmute(f) for f in args.infile]
+
     for (infile, outfile) in zip(args.infile, args.outfile):
+        log.info(outfile)
         with rio.open(infile, 'r') as infile_ds, torch.no_grad():
             out_raw_profile = copy.deepcopy(infile_ds.profile)
             out_raw_profile.update({
@@ -101,22 +113,13 @@ if __name__ == '__main__':
             for i in range(0, width - n, args.stride):
                 for j in range(0, height - n, args.stride):
                     batches.append((i, j))
-            batches = [
-                batches[i:i + args.chunksize]
-                for i in range(0, len(batches), args.chunksize)
-            ]
+            batches = [batches[i:i + args.chunksize] for i in range(0, len(batches), args.chunksize)]
 
             for batch in tqdm.tqdm(batches):
-                windows = [
-                    infile_ds.read(indexes, window=Window(i, j, n, n))
-                    for (i, j) in batch
-                ]
+                windows = [infile_ds.read(indexes, window=Window(i, j, n, n)) for (i, j) in batch]
                 windows = [w.astype(np.float32) for w in windows]
                 if args.ndwi_mask:
-                    windows = [
-                        w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0)
-                        for w in windows
-                    ]
+                    windows = [w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0) for w in windows]
                 if args.cloud_hack:
                     windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
 
@@ -124,12 +127,15 @@ if __name__ == '__main__':
                     windows = np.stack(windows, axis=0)
                 except:
                     continue
-                windows = torch.from_numpy(windows).to(dtype=torch.float32,
-                                                    device=device)
-                prob = torch.sigmoid(model(windows))
+                windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
+                prob = model(windows)
 
                 for k, (i, j) in enumerate(batch):
-                    ar_out[0, j:(j + n), i:(i + n)] += prob[k]
+                    if 'seg' in prob:
+                        _prob = torch.sigmoid(prob.get('seg')[k, 1]) - torch.sigmoid(prob.get('seg')[k, 0])
+                        ar_out[0, j:(j + n), i:(i + n)] += _prob
+                    else:
+                        ar_out[0, j:(j + n), i:(i + n)] += torch.sigmoid(prob.get('class')[k, 0])
                     pixel_hits[0, j:(j + n), i:(i + n)] += 1
 
         # Bring results back to CPU

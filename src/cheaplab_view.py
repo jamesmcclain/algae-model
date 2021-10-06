@@ -19,7 +19,7 @@ def cli_parser():
     parser.add_argument('--chunksize', required=False, type=int, default=256)
     parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
-    parser.add_argument('--outfile', required=True, type=str, nargs='+')
+    parser.add_argument('--outfile', required=False, default=None, type=str, nargs='+')
     parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--window-size', required=False, type=int, default=32)
@@ -59,7 +59,18 @@ if __name__ == '__main__':
     model.to(device)
     model.eval()
 
+    if args.outfile is None:
+        model_name = args.pth_load.split('/')[-1].split('.')[0]
+        def transmute(filename):
+            filename = filename.split('/')[-1]
+            filename = f"./cheaplab-{model_name}-{filename}"
+            if not filename.endswith('.tiff'):
+                filename = filename.replace('.tif', '.tiff')
+            return filename
+        args.outfile = [transmute(f) for f in args.infile]
+
     for (infile, outfile) in zip(args.infile, args.outfile):
+        log.info(outfile)
         with rio.open(infile, 'r') as infile_ds, torch.no_grad():
             out_raw_profile = copy.deepcopy(infile_ds.profile)
             out_raw_profile.update({
