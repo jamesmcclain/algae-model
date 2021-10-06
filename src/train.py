@@ -24,7 +24,7 @@ BACKBONES = [
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
     'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
     'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
-    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18'
+    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34'
 ]
 
 
@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:a2effb8850a2118ebcbefbaa4ddde6b219c84288',
+        'jamesmcclain/algae-classifier:5dddef20d1daf9b4c6b9d16b078051870a154286',
         'make_algae_model',
         in_channels=[4, 12, 224],
         prescale=args.prescale,

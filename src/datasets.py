@@ -32,18 +32,11 @@ def cloud_hack(data, n):
 def augment(data, n):
     if np.random.randint(0, 2) == 0:
         data = np.transpose(data, axes=(0, 2, 1))
-    if np.random.randint(0, 2) == 0:
-        data = np.flip(data, axis=(1 + np.random.randint(0, 2)))
-    if np.random.randint(0, 2) == 0:
-        data = np.transpose(data, (0, 2, 1))
-    if np.random.randint(0, 5) < 1:
-        data *= (1.0 + ((np.random.rand(n, 1, 1) - 0.5) / 50))
-    if np.random.randint(0, 5) < 1:
-        data *= (1.0 + ((np.random.rand(n, 32, 32) - 0.5) / 500))
-    data = np.rot90(data, k=np.random.randint(0, 4), axes=(1, 2))
-    if np.random.randint(0, 2) == 0:
-        data = np.transpose(data, (0, 2, 1))
-    return data.copy()
+    # if np.random.randint(0, 5) < 1:
+    #     data *= (1.0 + ((np.random.rand(n, 1, 1) - 0.5) / 50))
+    # if np.random.randint(0, 5) < 1:
+    #     data *= (1.0 + ((np.random.rand(n, 32, 32) - 0.5) / 500))
+    return data
 
 
 class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
