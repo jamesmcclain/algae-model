@@ -210,10 +210,13 @@ if __name__ == '__main__':
                 for batch in dl:
                     out = model(batch[0].float().to(device)).get('class').squeeze()
                     constraint = obj(out, batch[1].float().to(device))
-                    entropy = entropy_function(out)
-                    loss = args.w0 * constraint + args.w1 * entropy
+                    if args.w1 != 0:
+                        entropy = entropy_function(out)
+                        loss = args.w0 * constraint + args.w1 * entropy
+                        entropies1.append(entropy.item())
+                    else:
+                        loss = args.w0 * constraint
                     losses1.append(loss.item())
-                    entropies1.append(entropy.item())
                     constraints1.append(constraint.item())
                     loss.backward()
                     opt1a.step()
@@ -253,10 +256,13 @@ if __name__ == '__main__':
                 for batch in dl:
                     out = model(batch[0].float().to(device)).get('class').squeeze()
                     constraint = obj(out, batch[1].float().to(device))
-                    entropy = entropy_function(out)
-                    loss = constraint
+                    if args.w1 != 0:
+                        entropy = entropy_function(out)
+                        loss = args.w0 * constraint + args.w1 * entropy
+                        entropies1.append(entropy.item())
+                    else:
+                        loss = args.w0 * constraint
                     losses1.append(loss.item())
-                    entropies1.append(entropy.item())
                     constraints1.append(constraint.item())
                     loss.backward()
                     opt1a.step()
@@ -287,10 +293,13 @@ if __name__ == '__main__':
             for batch in dl:
                 out = model(batch[0].float().to(device)).get('class').squeeze()
                 constraint = obj(out, batch[1].float().to(device))
-                entropy = entropy_function(out)
-                loss = args.w0 * constraint + args.w1 * entropy
+                if args.w1 != 0:
+                    entropy = entropy_function(out)
+                    loss = args.w0 * constraint + args.w1 * entropy
+                    entropies1.append(entropy.item())
+                else:
+                    loss = args.w0 * constraint
                 losses1.append(loss.item())
-                entropies1.append(entropy.item())
                 constraints1.append(constraint.item())
                 loss.backward()
                 opt1b.step()
