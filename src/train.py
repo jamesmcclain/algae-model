@@ -24,7 +24,7 @@ BACKBONES = [
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
     'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
     'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
-    'efficientnet_b6', 'efficientnet_b7'
+    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18'
 ]
 
 
@@ -43,7 +43,7 @@ def cli_parser():
     parser.add_argument('--pth-load', required=False, type=str, default=None)
     parser.add_argument('--pth-save', required=False, type=str, default=None)
     parser.add_argument('--unlabeled-epoch-size', required=False, type=int, default=1e6)
-    parser.add_argument('--unlabeled-savezs', required=True, type=str, nargs='+')
+    parser.add_argument('--unlabeled-savezs', required=False, default=[], type=str, nargs='+')
     parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w1', required=False, type=float, default=0.0)
     parser.add_argument('--w2', required=False, type=float, default=0.5)
@@ -122,7 +122,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:6b66efed714b4d8da583b3ee162be79c81ff0594',
+        'jamesmcclain/algae-classifier:a2effb8850a2118ebcbefbaa4ddde6b219c84288',
         'make_algae_model',
         in_channels=[4, 12, 224],
         prescale=args.prescale,
@@ -208,7 +208,7 @@ if __name__ == '__main__':
 
             for dl in classification_dls:
                 for batch in dl:
-                    out = model(batch[0].float().to(device)).squeeze()
+                    out = model(batch[0].float().to(device)).get('class').squeeze()
                     constraint = obj(out, batch[1].float().to(device))
                     entropy = entropy_function(out)
                     loss = args.w0 * constraint + args.w1 * entropy
@@ -222,7 +222,7 @@ if __name__ == '__main__':
                 for (i, batch) in enumerate(dl):
                     if i > args.unlabeled_epoch_size:
                         break
-                    out = model(batch.float().to(device)).squeeze()
+                    out = model(batch.float().to(device)).get('class').squeeze()
                     entropy = entropy_function(out)
                     loss = args.w2 * entropy
                     losses2.append(loss.item())
@@ -251,7 +251,7 @@ if __name__ == '__main__':
 
             for dl in classification_dls:
                 for batch in dl:
-                    out = model(batch[0].float().to(device)).squeeze()
+                    out = model(batch[0].float().to(device)).get('class').squeeze()
                     constraint = obj(out, batch[1].float().to(device))
                     entropy = entropy_function(out)
                     loss = constraint
@@ -285,7 +285,7 @@ if __name__ == '__main__':
 
         for dl in classification_dls:
             for batch in dl:
-                out = model(batch[0].float().to(device)).squeeze()
+                out = model(batch[0].float().to(device)).get('class').squeeze()
                 constraint = obj(out, batch[1].float().to(device))
                 entropy = entropy_function(out)
                 loss = args.w0 * constraint + args.w1 * entropy
@@ -299,7 +299,7 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 if i > args.unlabeled_epoch_size:
                     break
-                out = model(batch.float().to(device)).squeeze()
+                out = model(batch.float().to(device)).get('class').squeeze()
                 entropy = entropy_function(out)
                 loss = args.w2 * entropy
                 losses2.append(loss.item())
@@ -335,7 +335,7 @@ if __name__ == '__main__':
     fn = 0.0
     with torch.no_grad():
         for (i, batch) in enumerate(dl1):
-            pred = torch.sigmoid(model(batch[0].float().to(device))).squeeze()
+            pred = torch.sigmoid(model(batch[0].float().to(device)).get('class')).squeeze()
             pred = (pred > 0.5).detach().cpu().numpy().astype(np.uint8)
             gt = batch[1].detach().cpu().numpy().astype(np.uint8)
             tp += np.sum((pred == 1) * (gt == 1))
