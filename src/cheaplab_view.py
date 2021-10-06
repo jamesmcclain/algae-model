@@ -44,7 +44,7 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:6b66efed714b4d8da583b3ee162be79c81ff0594',
+    model = torch.hub.load('jamesmcclain/algae-classifier:730726f5bccc679fa334da91fe4dc4cb71a35208',
                            'make_algae_model',
                            in_channels=[4, 12, 224],
                            prescale=args.prescale,
