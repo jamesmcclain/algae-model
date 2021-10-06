@@ -5,7 +5,21 @@ import numpy as np
 import torch
 
 
-def water_mask(data, n):
+def veggie_mask(data):
+    n = data.shape[0]
+    if n == 4:
+        ndvi = (data[3] - data[2]) / (data[3] + data[2])
+    elif n == 12:
+        ndvi = (data[7] - data[3]) / (data[7] + data[3])
+    elif n == 224:
+        ndvi = (data[50] - data[33]) / (data[50] + data[33])
+    else:
+        raise Exception(n)
+    return ndvi
+
+
+def water_mask(data):
+    n = data.shape[0]
     if n == 4:
         ndwi = (data[1] - data[3]) / (data[1] + data[3])
     elif n == 12:
@@ -17,7 +31,8 @@ def water_mask(data, n):
     return ndwi
 
 
-def cloud_hack(data, n):
+def cloud_hack(data):
+    n = data.shape[0]
     if n == 4:
         not_cloud = ((data[2] > 900) * (data[2] < 4000))
     elif n == 12:
@@ -29,13 +44,18 @@ def cloud_hack(data, n):
     return not_cloud
 
 
-def augment(data, n):
+def augment0(data):
     if np.random.randint(0, 2) == 0:
         data = np.transpose(data, axes=(0, 2, 1))
-    # if np.random.randint(0, 5) < 1:
-    #     data *= (1.0 + ((np.random.rand(n, 1, 1) - 0.5) / 50))
-    # if np.random.randint(0, 5) < 1:
-    #     data *= (1.0 + ((np.random.rand(n, 32, 32) - 0.5) / 500))
+    return data
+
+
+def augment1(data):
+    [n, w, h] = data.shape
+    if np.random.randint(0, 5) < 1:
+        data *= (1.0 + ((np.random.rand(n, 1, 1) - 0.5) / 50))
+    if np.random.randint(0, 5) < 1:
+        data *= (1.0 + ((np.random.rand(n, w, h) - 0.5) / 500))
     return data
 
 
@@ -75,19 +95,30 @@ class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
 
         # Water Mask
         if self.ndwi_mask:
-            ndwi = water_mask(data, n)
+            ndwi = water_mask(data)
             data *= (ndwi > 0.0)
 
         # Cloud Hack
         if self.cloud_hack:
-            not_cloud = cloud_hack(data, n)
+            not_cloud = cloud_hack(data)
             data *= not_cloud
 
         # Augmentations
         if self.augment:
-            data = augment(data, n)
+            data = augment0(data)
 
-        return data
+        ndvi = veggie_mask(data)
+        ndwi = water_mask(data)
+        not_algae = ((ndvi <= 0.0) + (ndwi <= 0.0)) > 0
+        yes_algae = (ndvi > 0.3) * (ndvi <= 0.8) * (ndwi > 0.3)
+        maybe_algae = (not_algae + yes_algae) < 1
+        label = 0 * not_algae + 1 * yes_algae + 2 * maybe_algae
+
+        # More augmentations
+        if self.augment:
+            data = augment1(data)
+
+        return data, label
 
 
 class AlgaeClassificationDataset(torch.utils.data.Dataset):
@@ -137,16 +168,16 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
 
         # Water Mask
         if self.ndwi_mask:
-            ndwi = water_mask(data, n)
+            ndwi = water_mask(data)
             data *= (ndwi > 0.0)
 
         # Cloud Hack
         if self.cloud_hack:
-            not_cloud = cloud_hack(data, n)
+            not_cloud = cloud_hack(data)
             data *= not_cloud
 
         # Augmentations
         if self.augment:
-            data = augment(data, n)
+            data = augment1(augment0(data))
 
         return (data, label)

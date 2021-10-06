@@ -24,7 +24,8 @@ BACKBONES = [
     'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
     'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
     'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
-    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34'
+    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34',
+    'fpn_resnet50'
 ]
 
 
@@ -46,7 +47,7 @@ def cli_parser():
     parser.add_argument('--unlabeled-savezs', required=False, default=[], type=str, nargs='+')
     parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w1', required=False, type=float, default=0.0)
-    parser.add_argument('--w2', required=False, type=float, default=0.5)
+    parser.add_argument('--w3', required=False, type=float, default=1.0)
 
     parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
@@ -122,7 +123,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:5dddef20d1daf9b4c6b9d16b078051870a154286',
+        'jamesmcclain/algae-classifier:6f376a4a81a76b8c87cabf0691ec3e114a9ca95e',
         'make_algae_model',
         in_channels=[4, 12, 224],
         prescale=args.prescale,
@@ -150,7 +151,8 @@ if __name__ == '__main__':
     if args.epochs2 > 0:
         sched2 = OneCycleLR(opt2b, max_lr=args.lr2, total_steps=args.epochs2)
 
-    obj = torch.nn.BCEWithLogitsLoss().to(device)
+    obj1 = torch.nn.BCEWithLogitsLoss().to(device)
+    obj2 = torch.nn.CrossEntropyLoss(ignore_index=2).to(device)
 
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
@@ -172,7 +174,7 @@ if __name__ == '__main__':
     log.info(f'parameter lr2: {args.lr2}')
     log.info(f'parameter w0:   {args.w0}')
     log.info(f'parameter w1:   {args.w1}')
-    log.info(f'parameter w2:   {args.w2}')
+    log.info(f'parameter w3:   {args.w3}')
 
     classification_dls = []
     classification_batches = 0
@@ -201,6 +203,7 @@ if __name__ == '__main__':
         unfreeze(model)
         for epoch in range(0, args.epochs1):
             constraints1 = []
+            constraints2 = []
             entropies1 = []
             entropies2 = []
             losses1 = []
@@ -209,7 +212,7 @@ if __name__ == '__main__':
             for dl in classification_dls:
                 for batch in dl:
                     out = model(batch[0].float().to(device)).get('class').squeeze()
-                    constraint = obj(out, batch[1].float().to(device))
+                    constraint = obj1(out, batch[1].float().to(device))
                     if args.w1 != 0:
                         entropy = entropy_function(out)
                         loss = args.w0 * constraint + args.w1 * entropy
@@ -225,23 +228,29 @@ if __name__ == '__main__':
                 for (i, batch) in enumerate(dl):
                     if i > args.unlabeled_epoch_size:
                         break
-                    out = model(batch.float().to(device)).get('class').squeeze()
-                    entropy = entropy_function(out)
-                    loss = args.w2 * entropy
-                    losses2.append(loss.item())
+                    out = model(batch[0].float().to(device))
+                    entropy = entropy_function(out.get('class').squeeze())
                     entropies2.append(entropy.item())
+                    if 'seg' in out.keys():
+                        constraint = obj2(out.get('seg'), batch[1].to(device))
+                        loss = constraint + args.w3 * entropy
+                        constraints2.append(constraint.item())
+                    else:
+                        loss = args.w3 * entropy
+                    losses2.append(loss.item())
                     loss.backward()
                     opt2a.step()
                     opt2a.zero_grad()
 
             mean_constraint1 = np.mean(constraints1)
+            mean_constraint2 = np.mean(constraints2)
             mean_entropy1 = np.mean(entropies1)
             mean_entropy2 = np.mean(entropies2)
             mean_loss1 = np.mean(losses1)
             mean_loss2 = np.mean(losses2)
 
             log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
-            log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f}')
+            log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f} constraint={mean_constraint2:+1.5f}')
 
         log.info('Training input filters and fully-connected layer')
         freeze(model)
@@ -255,7 +264,7 @@ if __name__ == '__main__':
             for dl in classification_dls:
                 for batch in dl:
                     out = model(batch[0].float().to(device)).get('class').squeeze()
-                    constraint = obj(out, batch[1].float().to(device))
+                    constraint = obj1(out, batch[1].float().to(device))
                     if args.w1 != 0:
                         entropy = entropy_function(out)
                         loss = args.w0 * constraint + args.w1 * entropy
@@ -292,7 +301,7 @@ if __name__ == '__main__':
         for dl in classification_dls:
             for batch in dl:
                 out = model(batch[0].float().to(device)).get('class').squeeze()
-                constraint = obj(out, batch[1].float().to(device))
+                constraint = obj1(out, batch[1].float().to(device))
                 if args.w1 != 0:
                     entropy = entropy_function(out)
                     loss = args.w0 * constraint + args.w1 * entropy
@@ -308,11 +317,15 @@ if __name__ == '__main__':
             for (i, batch) in enumerate(dl):
                 if i > args.unlabeled_epoch_size:
                     break
-                out = model(batch.float().to(device)).get('class').squeeze()
-                entropy = entropy_function(out)
-                loss = args.w2 * entropy
-                losses2.append(loss.item())
+                out = model(batch[0].float().to(device))
+                entropy = entropy_function(out.get('class').squeeze())
                 entropies2.append(entropy.item())
+                if 'seg' in out.keys():
+                    constraint = obj2(out.get('seg'), batch[1].to(device))
+                    loss = constraint + args.w3 * entropy
+                    constraints2.append(constraint.item())
+                loss = args.w3 * entropy
+                losses2.append(loss.item())
                 loss.backward()
                 opt2b.step()
                 opt2b.zero_grad()
@@ -325,13 +338,14 @@ if __name__ == '__main__':
             torch.save(model.state_dict(), '/tmp/checkpoint.pth')
 
         mean_constraint1 = np.mean(constraints1)
+        mean_constraint1 = np.mean(constraints2)
         mean_entropy1 = np.mean(entropies1)
         mean_entropy2 = np.mean(entropies2)
         mean_loss1 = np.mean(losses1)
         mean_loss2 = np.mean(losses2)
 
         log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
-        log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f}')
+        log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f} constraint={mean_constraint2:+1.5f}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
