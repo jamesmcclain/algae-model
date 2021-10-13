@@ -38,9 +38,6 @@ def cli_parser():
     parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
-    parser.add_argument('--no-cloud-hack', dest='cloud_hack', action='store_false')
-    parser.set_defaults(cloud_hack=True)
-
     return parser
 
 
@@ -120,8 +117,6 @@ if __name__ == '__main__':
                 windows = [w.astype(np.float32) for w in windows]
                 if args.ndwi_mask:
                     windows = [w * (((w[2] - w[7]) / (w[2] + w[7])) > 0.0) for w in windows]
-                if args.cloud_hack:
-                    windows = [(w * (w[3] > 100) * (w[3] < 1000)) for w in windows]
 
                 try:
                     windows = np.stack(windows, axis=0)

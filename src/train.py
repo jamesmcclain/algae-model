@@ -47,13 +47,11 @@ def cli_parser():
     parser.add_argument('--unlabeled-savezs', required=False, default=[], type=str, nargs='+')
     parser.add_argument('--w0', required=False, type=float, default=1.0)
     parser.add_argument('--w1', required=False, type=float, default=0.0)
-    parser.add_argument('--w3', required=False, type=float, default=1.0)
+    parser.add_argument('--w2', required=False, type=float, default=0.5)
+    parser.add_argument('--w3', required=False, type=float, default=0.5)
 
     parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
-
-    parser.add_argument('--no-cloud-hack', dest='cloud_hack', action='store_false')
-    parser.set_defaults(cloud_hack=True)
 
     parser.add_argument('--no-schedule', dest='schedule', action='store_false')
     parser.set_defaults(schedule=True)
@@ -157,7 +155,6 @@ if __name__ == '__main__':
     log.info(f'backbone={args.backbone}')
     log.info(f'batch-size={args.batch_size}')
     log.info(f'classification-savezs={args.classification_savezs}')
-    log.info(f'cloud-hack={args.cloud_hack}')
     log.info(f'epochs1={args.epochs1}')
     log.info(f'epochs2={args.epochs2}')
     log.info(f'ndwi-mask={args.ndwi_mask}')
@@ -174,6 +171,7 @@ if __name__ == '__main__':
     log.info(f'parameter lr2: {args.lr2}')
     log.info(f'parameter w0:   {args.w0}')
     log.info(f'parameter w1:   {args.w1}')
+    log.info(f'parameter w2:   {args.w2}')
     log.info(f'parameter w3:   {args.w3}')
 
     classification_dls = []
@@ -182,7 +180,6 @@ if __name__ == '__main__':
         log.info(f'loading {savez}')
         ad1 = AlgaeClassificationDataset(savezs=[savez],
                                          ndwi_mask=args.ndwi_mask,
-                                         cloud_hack=args.cloud_hack,
                                          augment=True)
         dl1 = DataLoader(ad1, **dataloader1_cfg)
         classification_batches += len(dl1)
@@ -193,7 +190,6 @@ if __name__ == '__main__':
         log.info(f'loading {savez}')
         ad2 = AlgaeUnlabeledDataset(savezs=[savez],
                                     ndwi_mask=args.ndwi_mask,
-                                    cloud_hack=args.cloud_hack,
                                     augment=True)
         dl2 = DataLoader(ad2, **dataloader2_cfg)
         unlabeled_dls.append(dl2)
@@ -211,10 +207,12 @@ if __name__ == '__main__':
 
             for dl in classification_dls:
                 for batch in dl:
-                    out = model(batch[0].float().to(device)).get('class').squeeze()
-                    constraint = obj1(out, batch[1].float().to(device))
-                    if args.w1 != 0:
-                        entropy = entropy_function(out)
+                    out = model(batch[0].float().to(device))
+                    constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
+                    if 'seg' in out.keys():
+                        constraint += obj2(out.get('seg'), batch[2].to(device))
+                    if args.w1 != 0.0:
+                        entropy = entropy_function(out.get('class').squeeze())
                         loss = args.w0 * constraint + args.w1 * entropy
                         entropies1.append(entropy.item())
                     else:
@@ -233,7 +231,7 @@ if __name__ == '__main__':
                     entropies2.append(entropy.item())
                     if 'seg' in out.keys():
                         constraint = obj2(out.get('seg'), batch[1].to(device))
-                        loss = constraint + args.w3 * entropy
+                        loss = args.w2 * constraint + args.w3 * entropy
                         constraints2.append(constraint.item())
                     else:
                         loss = args.w3 * entropy
@@ -265,7 +263,7 @@ if __name__ == '__main__':
                 for batch in dl:
                     out = model(batch[0].float().to(device)).get('class').squeeze()
                     constraint = obj1(out, batch[1].float().to(device))
-                    if args.w1 != 0:
+                    if args.w1 != 0.0:
                         entropy = entropy_function(out)
                         loss = args.w0 * constraint + args.w1 * entropy
                         entropies1.append(entropy.item())
@@ -293,6 +291,7 @@ if __name__ == '__main__':
     unfreeze(model.backbone)
     for epoch in range(0, args.epochs2):
         constraints1 = []
+        constraints2 = []
         entropies1 = []
         entropies2 = []
         losses1 = []
@@ -300,9 +299,11 @@ if __name__ == '__main__':
 
         for dl in classification_dls:
             for batch in dl:
-                out = model(batch[0].float().to(device)).get('class').squeeze()
-                constraint = obj1(out, batch[1].float().to(device))
-                if args.w1 != 0:
+                out = model(batch[0].float().to(device))
+                constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
+                if 'seg' in out.keys():
+                    constraint += obj2(out.get('seg'), batch[2].to(device))
+                if args.w1 != 0.0:
                     entropy = entropy_function(out)
                     loss = args.w0 * constraint + args.w1 * entropy
                     entropies1.append(entropy.item())
@@ -322,7 +323,7 @@ if __name__ == '__main__':
                 entropies2.append(entropy.item())
                 if 'seg' in out.keys():
                     constraint = obj2(out.get('seg'), batch[1].to(device))
-                    loss = constraint + args.w3 * entropy
+                    loss = args.w2 * constraint + args.w3 * entropy
                     constraints2.append(constraint.item())
                 loss = args.w3 * entropy
                 losses2.append(loss.item())
@@ -338,7 +339,7 @@ if __name__ == '__main__':
             torch.save(model.state_dict(), '/tmp/checkpoint.pth')
 
         mean_constraint1 = np.mean(constraints1)
-        mean_constraint1 = np.mean(constraints2)
+        mean_constraint2 = np.mean(constraints2)
         mean_entropy1 = np.mean(entropies1)
         mean_entropy2 = np.mean(entropies2)
         mean_loss1 = np.mean(losses1)

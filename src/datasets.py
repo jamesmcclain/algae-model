@@ -63,7 +63,6 @@ class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
     def __init__(self,
                  savezs,
                  ndwi_mask: bool = False,
-                 cloud_hack: bool = False,
                  augment: bool = False):
         self.yesno = []
         self.yesnos = []
@@ -73,7 +72,6 @@ class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
             self.yesnos.append(self.yesno[-1].shape[-1])
         self.compound = list(zip(self.yesnos, self.yesno))
         self.ndwi_mask = ndwi_mask
-        self.cloud_hack = cloud_hack
         self.augment = augment
         warnings.filterwarnings('ignore')
 
@@ -98,11 +96,6 @@ class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
             ndwi = water_mask(data)
             data *= (ndwi > 0.0)
 
-        # Cloud Hack
-        if self.cloud_hack:
-            not_cloud = cloud_hack(data)
-            data *= not_cloud
-
         # Augmentations
         if self.augment:
             data = augment0(data)
@@ -118,14 +111,13 @@ class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
         if self.augment:
             data = augment1(data)
 
-        return data, label
+        return (data, label)
 
 
 class AlgaeClassificationDataset(torch.utils.data.Dataset):
     def __init__(self,
                  savezs: List[str],
                  ndwi_mask: bool = False,
-                 cloud_hack: bool = False,
                  augment: bool = False):
         self.yes = []
         self.no = []
@@ -140,7 +132,6 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
         self.compound = list(
             zip(list(zip(self.yeas, self.nays)), list(zip(self.yes, self.no))))
         self.ndwi_mask = ndwi_mask
-        self.cloud_hack = cloud_hack
         self.augment = augment
         warnings.filterwarnings('ignore')
 
@@ -171,13 +162,22 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
             ndwi = water_mask(data)
             data *= (ndwi > 0.0)
 
-        # Cloud Hack
-        if self.cloud_hack:
-            not_cloud = cloud_hack(data)
-            data *= not_cloud
-
         # Augmentations
         if self.augment:
-            data = augment1(augment0(data))
+            data = augment0(data)
 
-        return (data, label)
+        ndvi = veggie_mask(data)
+        ndwi = water_mask(data)
+        not_algae = ((ndvi <= 0.0) + (ndwi <= 0.0)) > 0
+        yes_algae = (ndvi > 0.3) * (ndvi <= 0.8) * (ndwi > 0.3)
+        maybe_algae = (not_algae + yes_algae) < 1
+        if label == 1:
+            label2 = 2 * not_algae + 1 * yes_algae + 2 * maybe_algae
+        elif label == 0:
+            label2 = 0 * not_algae + 2 * yes_algae + 2 * maybe_algae
+
+        # More augmentations
+        if self.augment:
+            data = augment1(data)
+
+        return (data, label, label2)
