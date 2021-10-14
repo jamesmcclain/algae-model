@@ -194,6 +194,7 @@ if __name__ == '__main__':
         dl2 = DataLoader(ad2, **dataloader2_cfg)
         unlabeled_dls.append(dl2)
 
+
     if args.pth_load is None:
         log.info('Training everything')
         unfreeze(model)
@@ -230,6 +231,7 @@ if __name__ == '__main__':
                             imgs = imgs[:, [0, 2, 3, 8], :, :]
                         else:
                             imgs = None
+
             for dl in unlabeled_dls:
                 for (i, batch) in enumerate(dl):
                     if i > args.unlabeled_epoch_size:
@@ -266,8 +268,9 @@ if __name__ == '__main__':
             log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
             log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f} constraint={mean_constraint2:+1.5f}')
 
-        log.info('Training input filters and fully-connected layer')
+        log.info('Training CheapLabs, input/output layers')
         freeze(model)
+        unfreeze(model.cheaplab)
         unfreeze(model.first)
         unfreeze(model.last)
         for epoch in range(0, args.epochs1):
@@ -346,6 +349,7 @@ if __name__ == '__main__':
                         imgs = imgs[:, [0, 2, 3, 8], :, :]
                     else:
                         imgs = None
+
         for dl in unlabeled_dls:
             for (i, batch) in enumerate(dl):
                 if i > args.unlabeled_epoch_size:
@@ -359,7 +363,8 @@ if __name__ == '__main__':
                         constraint = obj2(out.get('seg'), batch[1].to(device))
                         loss = args.w2 * constraint + args.w3 * entropy
                         constraints2.append(constraint.item())
-                    loss = args.w3 * entropy
+                    else:
+                        loss = args.w3 * entropy
                     losses2.append(loss.item())
                     loss.backward()
                     opt2b.step()
@@ -387,6 +392,44 @@ if __name__ == '__main__':
 
         log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
         log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f} constraint={mean_constraint2:+1.5f}')
+
+    log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
+    torch.save(model.state_dict(), '/tmp/checkpoint.pth')
+
+    log.info('Reconciling CheapLabs')
+    freeze(model)
+    unfreeze(model.cheaplab['224'])
+    unfreeze(model.cheaplab['4'])
+    for epoch in range(0, args.epochs1):
+        losses1= []
+
+        for dl in unlabeled_dls:
+            for (i, batch) in enumerate(dl):
+                if i > args.unlabeled_epoch_size or batch[0].shape[1] < 224:
+                    break
+                imgs = batch[0].float()
+                outs = []
+                outs.append(model(imgs.to(device)).get('class'))
+                if imgs.shape[1] == 224:
+                    imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                    outs.append(model(imgs.to(device)).get('class'))
+                if imgs.shape[1] == 12:
+                    imgs = imgs[:, [0, 2, 3, 8], :, :]
+                    outs.append(model(imgs.to(device)).get('class'))
+
+                label = torch.stack([o for o in outs], axis=4)
+                label = torch.round(torch.sigmoid(torch.mean(label, axis=4))).float()
+                loss = obj1(outs[0], label)
+                for o in outs[1:]:
+                    loss += obj1(o, label)
+                losses1.append(loss.item())
+                loss.backward()
+                opt1a.step()
+                opt1a.zero_grad()
+
+        mean_loss1 = np.mean(losses1)
+
+        log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
