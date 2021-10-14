@@ -207,38 +207,54 @@ if __name__ == '__main__':
 
             for dl in classification_dls:
                 for batch in dl:
-                    out = model(batch[0].float().to(device))
-                    constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
-                    if 'seg' in out.keys():
-                        constraint += obj2(out.get('seg'), batch[2].to(device))
-                    if args.w1 != 0.0:
-                        entropy = entropy_function(out.get('class').squeeze())
-                        loss = args.w0 * constraint + args.w1 * entropy
-                        entropies1.append(entropy.item())
-                    else:
-                        loss = args.w0 * constraint
-                    losses1.append(loss.item())
-                    constraints1.append(constraint.item())
-                    loss.backward()
-                    opt1a.step()
-                    opt1a.zero_grad()
+                    imgs = batch[0].float()
+                    while imgs is not None:
+                        out = model(imgs.to(device))
+                        constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
+                        if 'seg' in out.keys():
+                            constraint += obj2(out.get('seg'), batch[2].to(device))
+                        if args.w1 != 0.0:
+                            entropy = entropy_function(out.get('class').squeeze())
+                            loss = args.w0 * constraint + args.w1 * entropy
+                            entropies1.append(entropy.item())
+                        else:
+                            loss = args.w0 * constraint
+                        losses1.append(loss.item())
+                        constraints1.append(constraint.item())
+                        loss.backward()
+                        opt1a.step()
+                        opt1a.zero_grad()
+                        if imgs.shape[1] == 224:
+                            imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                        elif imgs.shape[1] == 12:
+                            imgs = imgs[:, [0, 2, 3, 8], :, :]
+                        else:
+                            imgs = None
             for dl in unlabeled_dls:
                 for (i, batch) in enumerate(dl):
                     if i > args.unlabeled_epoch_size:
                         break
-                    out = model(batch[0].float().to(device))
-                    entropy = entropy_function(out.get('class').squeeze())
-                    entropies2.append(entropy.item())
-                    if 'seg' in out.keys():
-                        constraint = obj2(out.get('seg'), batch[1].to(device))
-                        loss = args.w2 * constraint + args.w3 * entropy
-                        constraints2.append(constraint.item())
-                    else:
-                        loss = args.w3 * entropy
-                    losses2.append(loss.item())
-                    loss.backward()
-                    opt2a.step()
-                    opt2a.zero_grad()
+                    imgs = batch[0].float()
+                    while imgs is not None:
+                        out = model(imgs.to(device))
+                        entropy = entropy_function(out.get('class').squeeze())
+                        entropies2.append(entropy.item())
+                        if 'seg' in out.keys():
+                            constraint = obj2(out.get('seg'), batch[1].to(device))
+                            loss = args.w2 * constraint + args.w3 * entropy
+                            constraints2.append(constraint.item())
+                        else:
+                            loss = args.w3 * entropy
+                        losses2.append(loss.item())
+                        loss.backward()
+                        opt2a.step()
+                        opt2a.zero_grad()
+                        if imgs.shape[1] == 224:
+                            imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                        elif imgs.shape[1] == 12:
+                            imgs = imgs[:, [0, 2, 3, 8], :, :]
+                        else:
+                            imgs = None
 
             mean_constraint1 = np.mean(constraints1)
             mean_constraint2 = np.mean(constraints2)
@@ -261,19 +277,27 @@ if __name__ == '__main__':
 
             for dl in classification_dls:
                 for batch in dl:
-                    out = model(batch[0].float().to(device)).get('class').squeeze()
-                    constraint = obj1(out, batch[1].float().to(device))
-                    if args.w1 != 0.0:
-                        entropy = entropy_function(out)
-                        loss = args.w0 * constraint + args.w1 * entropy
-                        entropies1.append(entropy.item())
-                    else:
-                        loss = args.w0 * constraint
-                    losses1.append(loss.item())
-                    constraints1.append(constraint.item())
-                    loss.backward()
-                    opt1a.step()
-                    opt1a.zero_grad()
+                    imgs = batch[0].float()
+                    while imgs is not None:
+                        out = model(imgs.to(device)).get('class').squeeze()
+                        constraint = obj1(out, batch[1].float().to(device))
+                        if args.w1 != 0.0:
+                            entropy = entropy_function(out)
+                            loss = args.w0 * constraint + args.w1 * entropy
+                            entropies1.append(entropy.item())
+                        else:
+                            loss = args.w0 * constraint
+                        losses1.append(loss.item())
+                        constraints1.append(constraint.item())
+                        loss.backward()
+                        opt1a.step()
+                        opt1a.zero_grad()
+                        if imgs.shape[1] == 224:
+                            imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                        elif imgs.shape[1] == 12:
+                            imgs = imgs[:, [0, 2, 3, 8], :, :]
+                        else:
+                            imgs = None
 
             mean_constraint1 = np.mean(constraints1)
             mean_entropy1 = np.mean(entropies1)
@@ -299,37 +323,53 @@ if __name__ == '__main__':
 
         for dl in classification_dls:
             for batch in dl:
-                out = model(batch[0].float().to(device))
-                constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
-                if 'seg' in out.keys():
-                    constraint += obj2(out.get('seg'), batch[2].to(device))
-                if args.w1 != 0.0:
-                    entropy = entropy_function(out)
-                    loss = args.w0 * constraint + args.w1 * entropy
-                    entropies1.append(entropy.item())
-                else:
-                    loss = args.w0 * constraint
-                losses1.append(loss.item())
-                constraints1.append(constraint.item())
-                loss.backward()
-                opt1b.step()
-                opt1b.zero_grad()
+                imgs = batch[0].float()
+                while imgs is not None:
+                    out = model(imgs.to(device))
+                    constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
+                    if 'seg' in out.keys():
+                        constraint += obj2(out.get('seg'), batch[2].to(device))
+                    if args.w1 != 0.0:
+                        entropy = entropy_function(out)
+                        loss = args.w0 * constraint + args.w1 * entropy
+                        entropies1.append(entropy.item())
+                    else:
+                        loss = args.w0 * constraint
+                    losses1.append(loss.item())
+                    constraints1.append(constraint.item())
+                    loss.backward()
+                    opt1b.step()
+                    opt1b.zero_grad()
+                    if imgs.shape[1] == 224:
+                        imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                    elif imgs.shape[1] == 12:
+                        imgs = imgs[:, [0, 2, 3, 8], :, :]
+                    else:
+                        imgs = None
         for dl in unlabeled_dls:
             for (i, batch) in enumerate(dl):
                 if i > args.unlabeled_epoch_size:
                     break
-                out = model(batch[0].float().to(device))
-                entropy = entropy_function(out.get('class').squeeze())
-                entropies2.append(entropy.item())
-                if 'seg' in out.keys():
-                    constraint = obj2(out.get('seg'), batch[1].to(device))
-                    loss = args.w2 * constraint + args.w3 * entropy
-                    constraints2.append(constraint.item())
-                loss = args.w3 * entropy
-                losses2.append(loss.item())
-                loss.backward()
-                opt2b.step()
-                opt2b.zero_grad()
+                imgs = batch[0].float()
+                while imgs is not None:
+                    out = model(imgs.to(device))
+                    entropy = entropy_function(out.get('class').squeeze())
+                    entropies2.append(entropy.item())
+                    if 'seg' in out.keys():
+                        constraint = obj2(out.get('seg'), batch[1].to(device))
+                        loss = args.w2 * constraint + args.w3 * entropy
+                        constraints2.append(constraint.item())
+                    loss = args.w3 * entropy
+                    losses2.append(loss.item())
+                    loss.backward()
+                    opt2b.step()
+                    opt2b.zero_grad()
+                    if imgs.shape[1] == 224:
+                        imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                    elif imgs.shape[1] == 12:
+                        imgs = imgs[:, [0, 2, 3, 8], :, :]
+                    else:
+                        imgs = None
 
         if args.schedule:
             sched1.step()
