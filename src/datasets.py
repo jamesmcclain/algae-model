@@ -31,19 +31,6 @@ def water_mask(data):
     return ndwi
 
 
-def cloud_hack(data):
-    n = data.shape[0]
-    if n == 4:
-        not_cloud = ((data[2] > 900) * (data[2] < 4000))
-    elif n == 12:
-        not_cloud = ((data[3] > 100) * (data[3] < 1000))
-    elif n == 224:
-        not_cloud = ((data[33] > 600) * (data[33] < 2000))
-    else:
-        raise Exception(n)
-    return not_cloud
-
-
 def augment0(data):
     if np.random.randint(0, 2) == 0:
         data = np.transpose(data, axes=(0, 2, 1))
