@@ -194,13 +194,11 @@ if __name__ == '__main__':
         dl2 = DataLoader(ad2, **dataloader2_cfg)
         unlabeled_dls.append(dl2)
 
-
     if args.pth_load is None:
         log.info('Training everything')
         unfreeze(model)
         for epoch in range(0, args.epochs1):
             constraints1 = []
-            constraints2 = []
             entropies1 = []
             entropies2 = []
             losses1 = []
@@ -241,12 +239,7 @@ if __name__ == '__main__':
                         out = model(imgs.to(device))
                         entropy = entropy_function(out.get('class').squeeze())
                         entropies2.append(entropy.item())
-                        if 'seg' in out.keys():
-                            constraint = obj2(out.get('seg'), batch[1].to(device))
-                            loss = args.w2 * constraint + args.w3 * entropy
-                            constraints2.append(constraint.item())
-                        else:
-                            loss = args.w3 * entropy
+                        loss = args.w3 * entropy
                         losses2.append(loss.item())
                         loss.backward()
                         opt2a.step()
@@ -259,16 +252,15 @@ if __name__ == '__main__':
                             imgs = None
 
             mean_constraint1 = np.mean(constraints1)
-            mean_constraint2 = np.mean(constraints2)
             mean_entropy1 = np.mean(entropies1)
             mean_entropy2 = np.mean(entropies2)
             mean_loss1 = np.mean(losses1)
             mean_loss2 = np.mean(losses2)
 
             log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
-            log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f} constraint={mean_constraint2:+1.5f}')
+            log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f}')
 
-        log.info('Training CheapLabs, input/output layers')
+        log.info('Training input and output layers')
         freeze(model)
         unfreeze(model.cheaplab)
         unfreeze(model.first)
