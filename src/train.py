@@ -353,7 +353,7 @@ if __name__ == '__main__':
                     entropies2.append(entropy.item())
                     if 'seg' in out.keys():
                         constraint = obj2(out.get('seg'), batch[1].to(device))
-                        loss = args.w2 * constraint + args.w3 * entropy
+                        loss = (i/args.unlabeled_epoch_size) * args.w2 * constraint + args.w3 * entropy
                         constraints2.append(constraint.item())
                     else:
                         loss = args.w3 * entropy
