@@ -121,7 +121,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:730726f5bccc679fa334da91fe4dc4cb71a35208',
+        'jamesmcclain/algae-classifier:d152667754388b7ecb4613a1cd664f79c4f9f21d',
         'make_algae_model',
         in_channels=[4, 12, 224],
         prescale=args.prescale,
@@ -411,9 +411,7 @@ if __name__ == '__main__':
 
                 label = torch.stack([o for o in outs], axis=4)
                 label = torch.round(torch.sigmoid(torch.mean(label, axis=4))).float()
-                loss = obj1(outs[0], label)
-                for o in outs[1:]:
-                    loss += obj1(o, label)
+                loss = obj1(outs[0], label) + obj1(outs[2], label)
                 losses1.append(loss.item())
                 loss.backward()
                 opt1a.step()
