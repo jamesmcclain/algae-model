@@ -25,7 +25,7 @@ BACKBONES = [
     'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
     'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
     'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34',
-    'fpn_resnet50'
+    'fpn_resnet50', 'fpn_resnet101', 'fpn_resnet152'
 ]
 
 
