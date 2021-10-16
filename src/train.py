@@ -25,8 +25,15 @@ BACKBONES = [
     'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
     'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
     'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34',
-    'fpn_resnet50', 'fpn_resnet101', 'fpn_resnet152'
+    'fpn_resnet50', 'fpn_resnet101', 'fpn_resnet152', 'fpn_efficientnet_b0',
+    'fpn_efficientnet_b1', 'fpn_efficientnet_b2', 'fpn_efficientnet_b3',
+    'fpn_efficientnet_b4', 'fpn_efficientnet_b5', 'fpn_efficientnet_b6',
+    'fpn_efficientnet_b7'
 ]
+
+AVIRIS_TO_SENTINEL2 = [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193]
+
+SENTINEL2_TO_4B = [0, 2, 3, 8]
 
 
 def cli_parser():
@@ -36,6 +43,7 @@ def cli_parser():
     parser.add_argument('--classification-savezs', required=True, type=str, nargs='+')
     parser.add_argument('--epochs1', required=False, type=int, default=33)
     parser.add_argument('--epochs2', required=False, type=int, default=2003)
+    parser.add_argument('--epochs3', required=False, type=int, default=33)
     parser.add_argument('--lr1', required=False, type=float, default=1e-4)
     parser.add_argument('--lr2', required=False, type=float, default=1e-5)
     parser.add_argument('--num-workers', required=False, type=int, default=0)
@@ -81,6 +89,27 @@ dataloader2_cfg = {
 }
 
 
+# https://discuss.pytorch.org/t/how-to-freeze-bn-layers-while-training-the-rest-of-network-mean-and-var-wont-freeze/89736/9
+def freeze_bn(m):
+    for (name, child) in m.named_children():
+        if isinstance(child, torch.nn.BatchNorm2d):
+            for param in child.parameters():
+                param.requires_grad = False
+            child.eval()
+        else:
+            freeze_bn(child)
+
+
+def unfreeze_bn(m):
+    for (name, child) in m.named_children():
+        if isinstance(child, torch.nn.BatchNorm2d):
+            for param in child.parameters():
+                param.requires_grad = True
+            child.train()
+        else:
+            unfreeze_bn(child)
+
+
 def freeze(m):
     for p in m.parameters():
         p.requires_grad = False
@@ -121,7 +150,7 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:312c05c5d4870e91c5f3cc5329fb8e275fa1ac5f',
+        'jamesmcclain/algae-classifier:a1969153c26c45bf4dfd6443f607252654c4e0f7',
         'make_algae_model',
         in_channels=[4, 12, 224],
         prescale=args.prescale,
@@ -157,6 +186,7 @@ if __name__ == '__main__':
     log.info(f'classification-savezs={args.classification_savezs}')
     log.info(f'epochs1={args.epochs1}')
     log.info(f'epochs2={args.epochs2}')
+    log.info(f'epochs3={args.epochs3}')
     log.info(f'ndwi-mask={args.ndwi_mask}')
     log.info(f'num-workers={args.num_workers}')
     log.info(f'prescale={args.prescale}')
@@ -197,6 +227,7 @@ if __name__ == '__main__':
     if args.pth_load is None:
         log.info('Training everything')
         unfreeze(model)
+        freeze_bn(model)
         for epoch in range(0, args.epochs1):
             constraints1 = []
             entropies1 = []
@@ -205,8 +236,11 @@ if __name__ == '__main__':
             losses2 = []
 
             for dl in classification_dls:
-                for batch in dl:
+                for (i, batch) in enumerate(dl):
                     imgs = batch[0].float()
+                    if i == 0:
+                        freeze_bn(model.cheaplab)
+                        unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                     while imgs is not None:
                         out = model(imgs.to(device))
                         constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
@@ -224,9 +258,9 @@ if __name__ == '__main__':
                         opt1a.step()
                         opt1a.zero_grad()
                         if imgs.shape[1] == 224:
-                            imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                            imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
                         elif imgs.shape[1] == 12:
-                            imgs = imgs[:, [0, 2, 3, 8], :, :]
+                            imgs = imgs[:, SENTINEL2_TO_4B, :, :]
                         else:
                             imgs = None
 
@@ -235,6 +269,9 @@ if __name__ == '__main__':
                     if i > args.unlabeled_epoch_size:
                         break
                     imgs = batch[0].float()
+                    if i == 0:
+                        freeze_bn(model.cheaplab)
+                        unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                     while imgs is not None:
                         out = model(imgs.to(device))
                         entropy = entropy_function(out.get('class').squeeze())
@@ -245,9 +282,9 @@ if __name__ == '__main__':
                         opt2a.step()
                         opt2a.zero_grad()
                         if imgs.shape[1] == 224:
-                            imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                            imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
                         elif imgs.shape[1] == 12:
-                            imgs = imgs[:, [0, 2, 3, 8], :, :]
+                            imgs = imgs[:, SENTINEL2_TO_4B, :, :]
                         else:
                             imgs = None
 
@@ -265,14 +302,18 @@ if __name__ == '__main__':
         unfreeze(model.cheaplab)
         unfreeze(model.first)
         unfreeze(model.last)
+        freeze_bn(model)
         for epoch in range(0, args.epochs1):
             constraints1 = []
             entropies1 = []
             losses1 = []
 
             for dl in classification_dls:
-                for batch in dl:
+                for (i, batch) in enumerate(dl):
                     imgs = batch[0].float()
+                    if i == 0:
+                        freeze_bn(model.cheaplab)
+                        unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                     while imgs is not None:
                         out = model(imgs.to(device)).get('class').squeeze()
                         constraint = obj1(out, batch[1].float().to(device))
@@ -288,9 +329,9 @@ if __name__ == '__main__':
                         opt1a.step()
                         opt1a.zero_grad()
                         if imgs.shape[1] == 224:
-                            imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                            imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
                         elif imgs.shape[1] == 12:
-                            imgs = imgs[:, [0, 2, 3, 8], :, :]
+                            imgs = imgs[:, SENTINEL2_TO_4B, :, :]
                         else:
                             imgs = None
 
@@ -308,6 +349,7 @@ if __name__ == '__main__':
 
     log.info('Training everything')
     unfreeze(model.backbone)
+    freeze_bn(model)
     for epoch in range(0, args.epochs2):
         constraints1 = []
         constraints2 = []
@@ -317,8 +359,11 @@ if __name__ == '__main__':
         losses2 = []
 
         for dl in classification_dls:
-            for batch in dl:
+            for (i, batch) in enumerate(dl):
                 imgs = batch[0].float()
+                if i == 0:
+                    freeze_bn(model.cheaplab)
+                    unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                 while imgs is not None:
                     out = model(imgs.to(device))
                     constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
@@ -336,9 +381,9 @@ if __name__ == '__main__':
                     opt1b.step()
                     opt1b.zero_grad()
                     if imgs.shape[1] == 224:
-                        imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                        imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
                     elif imgs.shape[1] == 12:
-                        imgs = imgs[:, [0, 2, 3, 8], :, :]
+                        imgs = imgs[:, SENTINEL2_TO_4B, :, :]
                     else:
                         imgs = None
 
@@ -347,6 +392,9 @@ if __name__ == '__main__':
                 if i > args.unlabeled_epoch_size:
                     break
                 imgs = batch[0].float()
+                if i == 0:
+                    freeze_bn(model.cheaplab)
+                    unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                 while imgs is not None:
                     out = model(imgs.to(device))
                     entropy = entropy_function(out.get('class').squeeze())
@@ -362,9 +410,9 @@ if __name__ == '__main__':
                     opt2b.step()
                     opt2b.zero_grad()
                     if imgs.shape[1] == 224:
-                        imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                        imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
                     elif imgs.shape[1] == 12:
-                        imgs = imgs[:, [0, 2, 3, 8], :, :]
+                        imgs = imgs[:, SENTINEL2_TO_4B, :, :]
                     else:
                         imgs = None
 
@@ -392,21 +440,25 @@ if __name__ == '__main__':
     freeze(model)
     unfreeze(model.cheaplab['224'])
     unfreeze(model.cheaplab['4'])
-    for epoch in range(0, args.epochs1):
-        losses1= []
+    freeze_bn(model)
+    for epoch in range(0, args.epochs3):
+        losses1 = []
 
         for dl in unlabeled_dls:
             for (i, batch) in enumerate(dl):
                 if i > args.unlabeled_epoch_size or batch[0].shape[1] < 224:
                     break
                 imgs = batch[0].float()
+                if i == 0:
+                    freeze_bn(model.cheaplab)
+                    unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                 outs = []
                 outs.append(model(imgs.to(device)).get('class'))
                 if imgs.shape[1] == 224:
-                    imgs = imgs[:, [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193], :, :]
+                    imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
                     outs.append(model(imgs.to(device)).get('class'))
                 if imgs.shape[1] == 12:
-                    imgs = imgs[:, [0, 2, 3, 8], :, :]
+                    imgs = imgs[:, SENTINEL2_TO_4B, :, :]
                     outs.append(model(imgs.to(device)).get('class'))
 
                 if len(outs[0].shape) == 2:
