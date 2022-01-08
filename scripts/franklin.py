@@ -26,7 +26,7 @@ def cli_parser():
 
 
 if __name__ == '__main__':
-    # curl -d ... -H 'Content-Type: application/json' https://franklin.nasa-hsi.azavea.com/search/
+    # curl -d @... -H 'Content-Type: application/json' https://franklin.nasa-hsi.azavea.com/search/
 
     args = cli_parser().parse_args()
 
