@@ -1,3 +1,4 @@
+rastervision/*.zip
 data/pth/old/*
 scripts/*.json
 *.pyc
