@@ -3,7 +3,8 @@
 import hashlib
 from functools import partial
 
-from pystac import STAC_IO, Catalog
+from pystac.stac_io import DefaultStacIO, StacIO
+from pystac import Catalog
 from rastervision.core.backend import *
 from rastervision.core.data import *
 from rastervision.core.data import (
@@ -16,10 +17,6 @@ from rastervision.pytorch_backend import *
 from rastervision.pytorch_learner import *
 
 
-def noop_write_method(uri, txt):
-    pass
-
-
 def pystac_workaround(uri):
     if uri.startswith('/vsizip/') and not uri.startswith('/vsizip//'):
         uri = uri.replace('/vsizip/', '/vsizip//')
@@ -30,9 +27,13 @@ def pystac_workaround(uri):
     return VsiFileSystem.read_str(uri)
 
 
-STAC_IO.read_text_method = \
-    lambda uri: VsiFileSystem.read_str(pystac_workaround(uri))
-STAC_IO.write_text_method = noop_write_method
+class CustomStacIO(DefaultStacIO):
+    def read_text(self, source, *args, **kwargs) -> str:
+        return VsiFileSystem.read_str(pystac_workaround(source))
+
+    def write_text(self, dest, txt, *args, **kwargs) -> None:
+        pass
+StacIO.set_default(CustomStacIO)
 
 
 def root_of_tarball(tarball: str) -> str:
@@ -141,7 +142,7 @@ def get_scenes(
 def get_config(runner,
                root_uri,
                json,
-               catalog_dir='/workdir', imagery_dir='/data',
+               catalog_dir='/vsizip//workdir', imagery_dir='/opt/data',
                chip_sz=512):
 
     chip_sz = int(chip_sz)
