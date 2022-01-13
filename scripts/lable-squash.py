@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
-import logging
-import sys
 import glob
 import json
-import os.path
+import logging
 import os
+import os.path
+import random
+import sys
 
 import numpy as np
-from PIL import Image, PngImagePlugin
 import tqdm
+from PIL import Image, PngImagePlugin
 
 
 def cli_parser():
@@ -23,7 +24,8 @@ def cli_parser():
 
 if __name__ == '__main__':
     args = cli_parser().parse_args()
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO, format='%(asctime)-15s %(message)s')
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO,
+                        format='%(asctime)-15s %(message)s')
     log = logging.getLogger()
 
     with open(args.json, 'r') as f:
@@ -62,8 +64,9 @@ if __name__ == '__main__':
                 usables.append(np.sum(np.stack(usables2), axis=0))
 
             labels = np.copy(labelss[0])
+
             for i, usable in enumerate(usables):
-                labels[usable] = labelss[i][usable]
+                labels[usable == 0] = labelss[i][usable == 0]
 
             img = Image.fromarray(labels)
             img.save(png_filename_out)
