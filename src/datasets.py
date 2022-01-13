@@ -1,8 +1,11 @@
+import glob
 import warnings
 from typing import List
 
 import numpy as np
 import torch
+import tqdm
+from PIL import Image, PngImagePlugin
 
 
 def veggie_mask(data):
@@ -44,6 +47,7 @@ def augment1(data):
     if np.random.randint(0, 5) < 1:
         data *= (1.0 + ((np.random.rand(n, w, h) - 0.5) / 500))
     return data
+
 
 
 class AlgaeUnlabeledDataset(torch.utils.data.Dataset):
@@ -168,3 +172,36 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
             data = augment1(data)
 
         return (data, label, label2)
+
+
+class AlgaeSegmentationDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_path: str):
+
+        self.image_array = []
+        self.labels_array = []
+        self.cls_array = []
+
+        for img in tqdm.tqdm(glob.glob(f'{dataset_path}/img/*.npy')):
+            img = img.replace('//', '/')
+            labels = img.replace('img', 'labels').replace('.npy', '.png')
+            try:
+                labels = np.copy(np.asarray(Image.open(labels)))
+                img = np.load(img).transpose(2, 0, 1)
+            except:
+                continue
+
+            labels[labels == 5] = 0xff
+            cls = np.array([np.any(labels == 0)])
+
+            self.image_array.append(img.astype(np.float16))
+            self.labels_array.append(labels.astype(np.long))
+            self.cls_array.append(cls.astype(np.float16))
+
+    def __len__(self):
+        return len(self.image_array)
+
+    def __getitem__(self, idx):
+        img = self.image_array[idx]
+        labels = self.labels_array[idx]
+        cls = self.cls_array[idx]
+        return (img, labels, cls)
