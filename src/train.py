@@ -19,17 +19,7 @@ from torch.optim.lr_scheduler import OneCycleLR
 
 from datasets import (AlgaeClassificationDataset, AlgaeUnlabeledDataset)
 
-BACKBONES = [
-    'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
-    'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
-    'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
-    'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
-    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34',
-    'fpn_resnet50', 'fpn_resnet101', 'fpn_resnet152', 'fpn_efficientnet_b0',
-    'fpn_efficientnet_b1', 'fpn_efficientnet_b2', 'fpn_efficientnet_b3',
-    'fpn_efficientnet_b4', 'fpn_efficientnet_b5', 'fpn_efficientnet_b6',
-    'fpn_efficientnet_b7'
-]
+BACKBONES = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']
 
 AVIRIS_TO_SENTINEL2 = [10, 15, 22, 33, 37, 41, 45, 50, 62, 107, 132, 193]
 
@@ -64,9 +54,6 @@ def cli_parser():
     parser.add_argument('--no-schedule', dest='schedule', action='store_false')
     parser.set_defaults(schedule=True)
 
-    parser.add_argument('--no-pretrained', dest='pretrained', action='store_false')
-    parser.set_defaults(pretrained=True)
-
     return parser
 
 
@@ -87,37 +74,6 @@ dataloader2_cfg = {
     'shuffle': True,
     'worker_init_fn': worker_init_fn
 }
-
-
-# https://discuss.pytorch.org/t/how-to-freeze-bn-layers-while-training-the-rest-of-network-mean-and-var-wont-freeze/89736/9
-def freeze_bn(m):
-    for (name, child) in m.named_children():
-        if isinstance(child, torch.nn.BatchNorm2d):
-            for param in child.parameters():
-                param.requires_grad = False
-            child.eval()
-        else:
-            freeze_bn(child)
-
-
-def unfreeze_bn(m):
-    for (name, child) in m.named_children():
-        if isinstance(child, torch.nn.BatchNorm2d):
-            for param in child.parameters():
-                param.requires_grad = True
-            child.train()
-        else:
-            unfreeze_bn(child)
-
-
-def freeze(m):
-    for p in m.parameters():
-        p.requires_grad = False
-
-
-def unfreeze(m):
-    for p in m.parameters():
-        p.requires_grad = True
 
 
 def greens_function(x, x0, eps=1e-3):
@@ -150,13 +106,15 @@ if __name__ == '__main__':
 
     device = torch.device('cuda')
     model = torch.hub.load(
-        'jamesmcclain/algae-classifier:df888fa9c383c976faecada5bef7844afe53cba7',
+        'jamesmcclain/algae-classifier:2a51273a16edaab22645f455e0b91002a74c702b',
         'make_algae_model',
         in_channels=[4, 12, 224],
-        prescale=args.prescale,
-        backbone_str=args.backbone,
-        pretrained=args.pretrained)
+        backbone=args.backbone,
+        pretrained=True)
 
+    if args.pth_load:
+        log.info(f'Loading model from {args.pth_load}')
+        model.load_state_dict(torch.load(args.pth_load))
     if args.pth_cheaplab_donor:
         state = torch.load(args.pth_cheaplab_donor)
         for key in list(state.keys()):
@@ -190,7 +148,6 @@ if __name__ == '__main__':
     log.info(f'ndwi-mask={args.ndwi_mask}')
     log.info(f'num-workers={args.num_workers}')
     log.info(f'prescale={args.prescale}')
-    log.info(f'pretrained={args.pretrained}')
     log.info(f'pth-load={args.pth_load}')
     log.info(f'pth-save={args.pth_save}')
     log.info(f'schedule={args.schedule}')
@@ -208,9 +165,7 @@ if __name__ == '__main__':
     classification_batches = 0
     for savez in args.classification_savezs:
         log.info(f'loading {savez}')
-        ad1 = AlgaeClassificationDataset(savezs=[savez],
-                                         ndwi_mask=args.ndwi_mask,
-                                         augment=True)
+        ad1 = AlgaeClassificationDataset(savezs=[savez], ndwi_mask=args.ndwi_mask, augment=True)
         dl1 = DataLoader(ad1, **dataloader1_cfg)
         classification_batches += len(dl1)
         classification_dls.append(dl1)
@@ -218,138 +173,13 @@ if __name__ == '__main__':
     unlabeled_dls = []
     for savez in args.unlabeled_savezs:
         log.info(f'loading {savez}')
-        ad2 = AlgaeUnlabeledDataset(savezs=[savez],
-                                    ndwi_mask=args.ndwi_mask,
-                                    augment=True)
+        ad2 = AlgaeUnlabeledDataset(savezs=[savez], ndwi_mask=args.ndwi_mask, augment=True)
         dl2 = DataLoader(ad2, **dataloader2_cfg)
         unlabeled_dls.append(dl2)
 
-    if args.pth_load is None:
-        log.info('Training everything')
-        unfreeze(model)
-        freeze_bn(model)
-        for epoch in range(0, args.epochs1):
-            constraints1 = []
-            entropies1 = []
-            entropies2 = []
-            losses1 = []
-            losses2 = []
-
-            for dl in classification_dls:
-                for (i, batch) in enumerate(dl):
-                    imgs = batch[0].float()
-                    if i == 0:
-                        freeze_bn(model.cheaplab)
-                        unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
-                    while imgs is not None:
-                        out = model(imgs.to(device))
-                        constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
-                        if 'seg' in out.keys():
-                            constraint += obj2(out.get('seg'), batch[2].to(device))
-                        if args.w1 != 0.0:
-                            entropy = entropy_function(out.get('class').squeeze())
-                            loss = args.w0 * constraint + args.w1 * entropy
-                            entropies1.append(entropy.item())
-                        else:
-                            loss = args.w0 * constraint
-                        losses1.append(loss.item())
-                        constraints1.append(constraint.item())
-                        loss.backward()
-                        opt1a.step()
-                        opt1a.zero_grad()
-                        if imgs.shape[1] == 224:
-                            imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
-                        elif imgs.shape[1] == 12:
-                            imgs = imgs[:, SENTINEL2_TO_4B, :, :]
-                        else:
-                            imgs = None
-
-            for dl in unlabeled_dls:
-                for (i, batch) in enumerate(dl):
-                    if i > args.unlabeled_epoch_size:
-                        break
-                    imgs = batch[0].float()
-                    if i == 0:
-                        freeze_bn(model.cheaplab)
-                        unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
-                    while imgs is not None:
-                        out = model(imgs.to(device))
-                        entropy = entropy_function(out.get('class').squeeze())
-                        entropies2.append(entropy.item())
-                        loss = args.w3 * entropy
-                        losses2.append(loss.item())
-                        loss.backward()
-                        opt2a.step()
-                        opt2a.zero_grad()
-                        if imgs.shape[1] == 224:
-                            imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
-                        elif imgs.shape[1] == 12:
-                            imgs = imgs[:, SENTINEL2_TO_4B, :, :]
-                        else:
-                            imgs = None
-
-            mean_constraint1 = np.mean(constraints1)
-            mean_entropy1 = np.mean(entropies1)
-            mean_entropy2 = np.mean(entropies2)
-            mean_loss1 = np.mean(losses1)
-            mean_loss2 = np.mean(losses2)
-
-            log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
-            log.info(f'          loss={mean_loss2:+1.5f} entropy={mean_entropy2:+1.5f}')
-
-        log.info('Training input and output layers')
-        freeze(model)
-        unfreeze(model.cheaplab)
-        unfreeze(model.first)
-        unfreeze(model.last)
-        freeze_bn(model)
-        for epoch in range(0, args.epochs1):
-            constraints1 = []
-            entropies1 = []
-            losses1 = []
-
-            for dl in classification_dls:
-                for (i, batch) in enumerate(dl):
-                    imgs = batch[0].float()
-                    if i == 0:
-                        freeze_bn(model.cheaplab)
-                        unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
-                    while imgs is not None:
-                        out = model(imgs.to(device)).get('class').squeeze()
-                        constraint = obj1(out, batch[1].float().to(device))
-                        if args.w1 != 0.0:
-                            entropy = entropy_function(out)
-                            loss = args.w0 * constraint + args.w1 * entropy
-                            entropies1.append(entropy.item())
-                        else:
-                            loss = args.w0 * constraint
-                        losses1.append(loss.item())
-                        constraints1.append(constraint.item())
-                        loss.backward()
-                        opt1a.step()
-                        opt1a.zero_grad()
-                        if imgs.shape[1] == 224:
-                            imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
-                        elif imgs.shape[1] == 12:
-                            imgs = imgs[:, SENTINEL2_TO_4B, :, :]
-                        else:
-                            imgs = None
-
-            mean_constraint1 = np.mean(constraints1)
-            mean_entropy1 = np.mean(entropies1)
-            mean_loss1 = np.mean(losses1)
-
-            log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f} entropy={mean_entropy1:+1.5f} constraint={mean_constraint1:+1.5f}')
-    else:
-        log.info(f'Loading model from {args.pth_load}')
-        model.load_state_dict(torch.load(args.pth_load))
-        for cheaplab in model.cheaplab.values():
-            cheaplab.to(device)
-        model.to(device)
-
     log.info('Training everything')
-    unfreeze(model.backbone)
-    freeze_bn(model)
+    model.whole_mode()
+    model.freeze_bn()
     for epoch in range(0, args.epochs2):
         constraints1 = []
         constraints2 = []
@@ -361,14 +191,11 @@ if __name__ == '__main__':
         for dl in classification_dls:
             for (i, batch) in enumerate(dl):
                 imgs = batch[0].float()
-                if i == 0:
-                    freeze_bn(model.cheaplab)
-                    unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                 while imgs is not None:
                     out = model(imgs.to(device))
-                    constraint = obj1(out.get('class').squeeze(), batch[1].float().to(device))
-                    if 'seg' in out.keys():
-                        constraint += obj2(out.get('seg'), batch[2].to(device))
+                    constraint = obj1(out.get('cls_out').get('0').squeeze(), batch[1].float().to(device))
+                    if 'seg_out' in out.keys():
+                        constraint += obj2(out.get('seg_out'), batch[2].to(device))
                     if args.w1 != 0.0:
                         entropy = entropy_function(out)
                         loss = args.w0 * constraint + args.w1 * entropy
@@ -392,15 +219,12 @@ if __name__ == '__main__':
                 if i > args.unlabeled_epoch_size:
                     break
                 imgs = batch[0].float()
-                if i == 0:
-                    freeze_bn(model.cheaplab)
-                    unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
                 while imgs is not None:
                     out = model(imgs.to(device))
-                    entropy = entropy_function(out.get('class').squeeze())
+                    entropy = entropy_function(out.get('cls_out').get('0').squeeze())
                     entropies2.append(entropy.item())
-                    if 'seg' in out.keys():
-                        constraint = obj2(out.get('seg'), batch[1].to(device))
+                    if 'seg_out' in out.keys():
+                        constraint = obj2(out.get('seg_out'), batch[1].to(device))
                         loss = (i/args.unlabeled_epoch_size) * args.w2 * constraint + args.w3 * entropy
                         constraints2.append(constraint.item())
                     else:
@@ -436,46 +260,46 @@ if __name__ == '__main__':
     log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
     torch.save(model.state_dict(), '/tmp/checkpoint.pth')
 
-    log.info('Reconciling CheapLabs')
-    freeze(model)
-    unfreeze(model.cheaplab['224'])
-    unfreeze(model.cheaplab['4'])
-    freeze_bn(model)
-    for epoch in range(0, args.epochs3):
-        losses1 = []
+    # log.info('Reconciling CheapLabs')
+    # freeze(model)
+    # unfreeze(model.cheaplab['224'])
+    # unfreeze(model.cheaplab['4'])
+    # freeze_bn(model)
+    # for epoch in range(0, args.epochs3):
+    #     losses1 = []
 
-        for dl in unlabeled_dls:
-            for (i, batch) in enumerate(dl):
-                if i > args.unlabeled_epoch_size or batch[0].shape[1] < 224:
-                    break
-                imgs = batch[0].float()
-                if i == 0:
-                    freeze_bn(model.cheaplab)
-                    unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
-                outs = []
-                outs.append(model(imgs.to(device)).get('class'))
-                if imgs.shape[1] == 224:
-                    imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
-                    outs.append(model(imgs.to(device)).get('class'))
-                if imgs.shape[1] == 12:
-                    imgs = imgs[:, SENTINEL2_TO_4B, :, :]
-                    outs.append(model(imgs.to(device)).get('class'))
+    #     for dl in unlabeled_dls:
+    #         for (i, batch) in enumerate(dl):
+    #             if i > args.unlabeled_epoch_size or batch[0].shape[1] < 224:
+    #                 break
+    #             imgs = batch[0].float()
+    #             if i == 0:
+    #                 freeze_bn(model.cheaplab)
+    #                 unfreeze_bn(model.cheaplab[str(imgs.shape[1])])
+    #             outs = []
+    #             outs.append(model(imgs.to(device)).get('cls_out').get('0'))
+    #             if imgs.shape[1] == 224:
+    #                 imgs = imgs[:, AVIRIS_TO_SENTINEL2, :, :]
+    #                 outs.append(model(imgs.to(device)).get('cls_out').get('0'))
+    #             if imgs.shape[1] == 12:
+    #                 imgs = imgs[:, SENTINEL2_TO_4B, :, :]
+    #                 outs.append(model(imgs.to(device)).get('cls_out').get('0'))
 
-                if len(outs[0].shape) == 2:
-                    label = torch.stack([o for o in outs], axis=2)
-                    label = torch.round(torch.sigmoid(torch.mean(label, axis=2))).float()
-                else:
-                    label = torch.stack([o for o in outs], axis=4)
-                    label = torch.round(torch.sigmoid(torch.mean(label, axis=4))).float()
-                loss = obj1(outs[0], label) + obj1(outs[2], label)
-                losses1.append(loss.item())
-                loss.backward()
-                opt1a.step()
-                opt1a.zero_grad()
+    #             if len(outs[0].shape) == 2:
+    #                 label = torch.stack([o for o in outs], axis=2)
+    #                 label = torch.round(torch.sigmoid(torch.mean(label, axis=2))).float()
+    #             else:
+    #                 label = torch.stack([o for o in outs], axis=4)
+    #                 label = torch.round(torch.sigmoid(torch.mean(label, axis=4))).float()
+    #             loss = obj1(outs[0], label) + obj1(outs[2], label)
+    #             losses1.append(loss.item())
+    #             loss.backward()
+    #             opt1a.step()
+    #             opt1a.zero_grad()
 
-        mean_loss1 = np.mean(losses1)
+    #     mean_loss1 = np.mean(losses1)
 
-        log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f}')
+    #     log.info(f'epoch={epoch:<3d} loss={mean_loss1:+1.5f}')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
@@ -488,7 +312,7 @@ if __name__ == '__main__':
     fn = 0.0
     with torch.no_grad():
         for (i, batch) in enumerate(dl1):
-            pred = torch.sigmoid(model(batch[0].float().to(device)).get('class')).squeeze()
+            pred = torch.sigmoid(model(batch[0].float().to(device)).get('cls_out').get('0')).squeeze()
             pred = (pred > 0.5).detach().cpu().numpy().astype(np.uint8)
             gt = batch[1].detach().cpu().numpy().astype(np.uint8)
             tp += np.sum((pred == 1) * (gt == 1))
