@@ -13,30 +13,26 @@ import torch.hub
 import tqdm
 from rasterio.windows import Window
 
-BACKBONES = [
-    'vgg16', 'densenet161', 'shufflenet_v2_x1_0', 'mobilenet_v2',
-    'mobilenet_v3_large', 'mobilenet_v3_small', 'resnet18', 'resnet34',
-    'resnet50', 'resnet101', 'resnet152', 'efficientnet_b0', 'efficientnet_b1',
-    'efficientnet_b2', 'efficientnet_b3', 'efficientnet_b4', 'efficientnet_b5',
-    'efficientnet_b6', 'efficientnet_b7', 'fpn_resnet18', 'fpn_resnet34',
-    'fpn_resnet50'
-]
+
+BACKBONES = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152']
 
 
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--backbone', required=True, type=str, choices=BACKBONES)
-    parser.add_argument('--chunksize', required=False, type=int, default=256)
+    parser.add_argument('--chunksize', required=False, type=int, default=4)
     parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
     parser.add_argument('--outfile', required=False, default=None, type=str, nargs='+')
-    parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
-    parser.add_argument('--stride', required=False, type=int, default=13)
-    parser.add_argument('--window-size', required=False, type=int, default=32)
+    parser.add_argument('--stride', required=False, type=int, default=257)
+    parser.add_argument('--window-size', required=False, type=int, default=512)
 
     parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
+
+    parser.add_argument('--force-class', required=False, dest='force_class', action='store_true')
+    parser.set_defaults(force_class=False)
 
     return parser
 
@@ -52,11 +48,10 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:730726f5bccc679fa334da91fe4dc4cb71a35208',
+    model = torch.hub.load('jamesmcclain/algae-classifier:2a51273a16edaab22645f455e0b91002a74c702b',
                            'make_algae_model',
                            in_channels=[4, 12, 224],
-                           prescale=args.prescale,
-                           backbone_str=args.backbone,
+                           backbone=args.backbone,
                            pretrained=False)
     model.load_state_dict(torch.load(args.pth_load))
     model.to(device)
@@ -126,11 +121,13 @@ if __name__ == '__main__':
                 prob = model(windows)
 
                 for k, (i, j) in enumerate(batch):
-                    if 'seg' in prob:
-                        _prob = torch.sigmoid(prob.get('seg')[k, 1]) - torch.sigmoid(prob.get('seg')[k, 0])
-                        ar_out[0, j:(j + n), i:(i + n)] += _prob
+                    if 'seg_out' in prob or args.force_class:
+                        import pdb ; pdb.set_trace()
+                        best = prob.get('seg_out').softmax(dim=1).detach().cpu().numpy()
+                        best = np.argmax(best, axis=0)
+                        ar_out[0, j:(j + n), i:(i + n)] += (best == 0)
                     else:
-                        ar_out[0, j:(j + n), i:(i + n)] += torch.sigmoid(prob.get('class')[k, 0])
+                        ar_out[0, j:(j + n), i:(i + n)] += torch.sigmoid(prob.get('cls_out').get('0')[k, 0])
                     pixel_hits[0, j:(j + n), i:(i + n)] += 1
 
         # Bring results back to CPU
