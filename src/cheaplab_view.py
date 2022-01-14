@@ -20,7 +20,6 @@ def cli_parser():
     parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
     parser.add_argument('--outfile', required=False, default=None, type=str, nargs='+')
-    parser.add_argument('--prescale', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--window-size', required=False, type=int, default=32)
 
@@ -41,11 +40,10 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:730726f5bccc679fa334da91fe4dc4cb71a35208',
+    model = torch.hub.load('jamesmcclain/algae-classifier:2a51273a16edaab22645f455e0b91002a74c702b',
                            'make_algae_model',
                            in_channels=[4, 12, 224],
-                           prescale=args.prescale,
-                           backbone_str='resnet18',
+                           backbone='resnet18',
                            pretrained=False)
     state = torch.load(args.pth_load)
     for key in list(state.keys()):
