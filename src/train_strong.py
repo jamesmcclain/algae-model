@@ -144,7 +144,7 @@ if __name__ == '__main__':
             model.eval()
             with torch.no_grad():
                 seg_losses, cls_losses, losses = do_epoch(valid_dl, model, validation_mode=True)
-            log.info(f'Eval: epoch={epoch:<3d} loss={np.mean(losses):1.5f} class={np.mean(cls_losses):1.5f} segmentation={np.mean(seg_losses):1.5f}')
+            log.info(f' Eval: epoch={epoch:<3d} loss={np.mean(losses):1.5f} class={np.mean(cls_losses):1.5f} segmentation={np.mean(seg_losses):1.5f}')
 
         if epoch % 33 == 0:
             log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
