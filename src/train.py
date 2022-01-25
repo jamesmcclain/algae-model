@@ -58,6 +58,9 @@ def cli_parser():
     parser.add_argument('--w2', required=False, type=float, default=0.5)
     parser.add_argument('--w3', required=False, type=float, default=0.5)
 
+    parser.add_argument('--classifier-from-github', required=False, dest='classifier_from_github', action='store_true')
+    parser.set_defaults(classifier_from_github=False)
+
     parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
@@ -149,13 +152,21 @@ if __name__ == '__main__':
     dataloader2_cfg['num_workers'] = args.num_workers
 
     device = torch.device('cuda')
-    model = torch.hub.load(
-        'jamesmcclain/algae-classifier:df888fa9c383c976faecada5bef7844afe53cba7',
-        'make_algae_model',
-        in_channels=[4, 12, 224],
-        prescale=args.prescale,
-        backbone_str=args.backbone,
-        pretrained=args.pretrained)
+    if args.classifier_from_github:
+        model = torch.hub.load(
+            'jamesmcclain/algae-classifier:df888fa9c383c976faecada5bef7844afe53cba7',
+            'make_algae_model',
+            in_channels=[4, 12, 224],
+            prescale=args.prescale,
+            backbone_str=args.backbone,
+            pretrained=args.pretrained)
+    else:
+        from algae import make_algae_model
+        model = make_algae_model(
+            in_channels=[4, 12, 224],
+            prescale=args.prescale,
+            backbone_str=args.backbone,
+            pretrained=args.pretrained)
 
     if args.pth_cheaplab_donor:
         state = torch.load(args.pth_cheaplab_donor)
