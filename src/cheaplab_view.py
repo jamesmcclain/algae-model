@@ -24,6 +24,9 @@ def cli_parser():
     parser.add_argument('--pth-load', required=True, type=str)
     parser.add_argument('--window-size', required=False, type=int, default=32)
 
+    parser.add_argument('--classifier-from-github', required=False, dest='classifier_from_github', action='store_true')
+    parser.set_defaults(classifier_from_github=False)
+
     parser.add_argument('--ndwi-mask', required=False, dest='ndwi_mask', action='store_true')
     parser.set_defaults(ndwi_mask=False)
 
@@ -41,12 +44,20 @@ if __name__ == '__main__':
     n = args.window_size
 
     device = torch.device(args.device)
-    model = torch.hub.load('jamesmcclain/algae-classifier:730726f5bccc679fa334da91fe4dc4cb71a35208',
-                           'make_algae_model',
-                           in_channels=[4, 12, 224],
-                           prescale=args.prescale,
-                           backbone_str='resnet18',
-                           pretrained=False)
+    if args.classifier_from_github:
+        model = torch.hub.load('jamesmcclain/algae-classifier:df888fa9c383c976faecada5bef7844afe53cba7',
+                               'make_algae_model',
+                               in_channels=[4, 12, 224],
+                               prescale=args.prescale,
+                               backbone_str='resnet18',
+                               pretrained=False)
+    else:
+        from algae import make_algae_model
+        model = make_algae_model(
+            in_channels=[4, 12, 224],
+            prescale=args.prescale,
+            backbone_str='resnet18',
+            pretrained=False)
     state = torch.load(args.pth_load)
     for key in list(state.keys()):
         if 'cheaplab' not in key:
