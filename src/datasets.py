@@ -1,5 +1,11 @@
 import warnings
+import random
+import tqdm
+import glob
+import math
+from PIL import Image
 from typing import List
+from zipfile import ZipFile
 
 import numpy as np
 import torch
@@ -168,3 +174,73 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
             data = augment1(data)
 
         return (data, label, label2)
+
+
+class SegmentationDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_path: str,
+                 is_aviris: bool = True,
+                 is_cloud: bool = False,
+                 is_validation: bool = False):
+
+        assert is_cloud + 0 == 1
+        self.is_aviris = is_aviris
+        self.is_cloud = is_cloud
+        self.ziparray = []
+
+        for filename in tqdm.tqdm(glob.glob(f'{dataset_path}/*.zip')):
+            z = ZipFile(filename, 'r')
+            if is_validation:
+                l = list(filter(lambda s: 'valid/' in s, z.namelist()))
+            elif not is_validation:
+                l = list(filter(lambda s: 'train/' in s, z.namelist()))
+            entry = {'z': z, 'l': l}
+            self.ziparray.append(entry)
+
+    def __len__(self):
+        return 1<<30
+
+    def __getitem__(self, idx):
+
+        # not all zip files have validation data
+        l = []
+        while len(l) == 0:
+            entry = random.choice(self.ziparray)
+            l = entry.get('l')
+
+        img_or_label = random.choice(entry.get('l'))
+
+        basename = img_or_label.split('/')[-1].split('.')[0]
+        if 'img/' in img_or_label:
+            img = img_or_label
+            label = next(filter(lambda s: 'labels/' in s and basename in s, entry.get('l')))
+        elif 'labels/' in img_or_label:
+            label = img_or_label
+            img = next(filter(lambda s: 'img/' in s and basename in s, entry.get('l')))
+        else:
+            raise Exception()
+
+        with entry.get('z').open(img) as f:
+            if img.endswith('.png'):
+                img = np.copy(np.asarray(Image.open(f)))
+            elif img.endswith('.npy'):
+                img = np.load(f).transpose(2, 0, 1)
+            else:
+                raise Exception()
+
+        with entry.get('z').open(label) as f:
+            if label.endswith('.png'):
+                label = np.copy(np.asarray(Image.open(f)))
+            elif label.endswith('.npy'):
+                label = np.load(f)
+            else:
+                raise Exception()
+
+        if self.is_aviris and self.is_cloud:
+            labels = (label == 2)*1
+            labels[label == 3] = 2
+        elif not self.is_aviris and self.is_cloud:
+            labels = (label == 1)*1
+        else:
+            raise Exception()
+
+        return (img.astype(np.float32), labels)
