@@ -201,39 +201,48 @@ class SegmentationDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
 
-        # not all zip files have validation data
-        l = []
-        while len(l) == 0:
+        # Not all zip files have validation data
+        while True:
             entry = random.choice(self.ziparray)
-            l = entry.get('l')
+            if len(entry.get('l')) > 0:
+                break
 
-        img_or_label = random.choice(entry.get('l'))
-
-        basename = img_or_label.split('/')[-1].split('.')[0]
-        if 'img/' in img_or_label:
-            img = img_or_label
-            label = next(filter(lambda s: 'labels/' in s and basename in s, entry.get('l')))
-        elif 'labels/' in img_or_label:
-            label = img_or_label
-            img = next(filter(lambda s: 'img/' in s and basename in s, entry.get('l')))
-        else:
-            raise Exception()
-
-        with entry.get('z').open(img) as f:
-            if img.endswith('.png'):
-                img = np.copy(np.asarray(Image.open(f)))
-            elif img.endswith('.npy'):
-                img = np.load(f).transpose(2, 0, 1)
+        # The while loop is protect against occasional exceptions while reading zip files
+        while True:
+            img_or_label = random.choice(entry.get('l'))
+            basename = img_or_label.split('/')[-1].split('.')[0]
+            if 'img/' in img_or_label:
+                img = img_or_label
+                label = next(filter(lambda s: 'labels/' in s and basename in s, entry.get('l')))
+            elif 'labels/' in img_or_label:
+                label = img_or_label
+                img = next(filter(lambda s: 'img/' in s and basename in s, entry.get('l')))
             else:
                 raise Exception()
 
-        with entry.get('z').open(label) as f:
-            if label.endswith('.png'):
-                label = np.copy(np.asarray(Image.open(f)))
-            elif label.endswith('.npy'):
-                label = np.load(f)
-            else:
-                raise Exception()
+            try:
+                with entry.get('z').open(img) as f:
+                    if img.endswith('.png'):
+                        img = np.copy(np.asarray(Image.open(f)))
+                    elif img.endswith('.npy'):
+                        img = np.load(f).transpose(2, 0, 1)
+                    else:
+                        raise Exception()
+            except:
+                continue
+
+            try:
+                with entry.get('z').open(label) as f:
+                    if label.endswith('.png'):
+                        label = np.copy(np.asarray(Image.open(f)))
+                    elif label.endswith('.npy'):
+                        label = np.load(f)
+                    else:
+                        raise Exception()
+            except:
+                continue
+
+            break
 
         if self.is_aviris and self.is_cloud:
             labels = (label == 2)*1
