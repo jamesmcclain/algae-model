@@ -22,10 +22,10 @@ def cli_parser():
     parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
     parser.add_argument('--aviris-l1-path', required=False, type=str, default=None)
     parser.add_argument('--epochs', required=False, type=int, default=107)
-    parser.add_argument('--pseudo-epoch-size', required=False, type=int, default=1007)
-    parser.add_argument('--lr', required=False, type=float, default=1e-4)
+    parser.add_argument('--pseudo-epoch-size', required=False, type=int, default=256)
+    parser.add_argument('--lr', required=False, type=float, default=1e-3)
     parser.add_argument('--num-workers', required=False, type=int, default=1)
-    parser.add_argument('--pth-save', required=True, type=str)
+    parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
     return parser
 
 
@@ -114,7 +114,7 @@ if __name__ == '__main__':
 
         valid_losses = []
         model.eval()
-        for j in tqdm.tqdm(range(10)):
+        for j in tqdm.tqdm(range(batches_per_epoch // 4)):
             choice = random.choice(valid_dls)
             dl = iter(choice.get('dl'))
             shadows = choice.get('shadows')
