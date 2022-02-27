@@ -34,7 +34,7 @@ class CloudModel(torch.nn.Module):
             'jamesmcclain/CheapLab:38af8e6cd084fc61792f29189158919c69d58c6a',
             'make_cheaplab_model',
             num_channels=12,
-            out_channels=2)
+            out_channels=3)
 
     def forward(self, x):
         [w, h] = x.shape[-2:]

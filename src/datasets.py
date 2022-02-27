@@ -3,6 +3,7 @@ import random
 import tqdm
 import glob
 import math
+import bisect
 from PIL import Image
 from typing import List
 from zipfile import ZipFile
@@ -186,72 +187,62 @@ class SegmentationDataset(torch.utils.data.Dataset):
         self.is_aviris = is_aviris
         self.is_cloud = is_cloud
         self.ziparray = []
+        self.idxs = []
+        self.samples = 0
 
         for filename in tqdm.tqdm(glob.glob(f'{dataset_path}/*.zip')):
-            z = ZipFile(filename, 'r')
-            if is_validation:
-                l = list(filter(lambda s: 'valid/' in s, z.namelist()))
-            elif not is_validation:
-                l = list(filter(lambda s: 'train/' in s, z.namelist()))
-            entry = {'z': z, 'l': l}
-            self.ziparray.append(entry)
+            with ZipFile(filename, 'r') as z:
+                if is_validation:
+                    imgs = list(filter(lambda s: 'valid/' in s and 'img/' in s, z.namelist()))
+                    labels = list(filter(lambda s: 'valid/' in s and 'labels/' in s, z.namelist()))
+                elif not is_validation:
+                    imgs = list(filter(lambda s: 'train/' in s and 'img/' in s, z.namelist()))
+                    labels = list(filter(lambda s: 'train/' in s and 'labels/' in s, z.namelist()))
+                imgs.sort()
+                labels.sort()
+                entry = {'filename': filename, 'imgs': imgs, 'labels': labels}
+                if len(imgs) > 0 and len(imgs) == len(labels):
+                    self.samples += len(imgs)
+                    self.ziparray.append(entry)
+                    self.idxs.append(self.samples)
 
     def __len__(self):
-        return 1<<30
+        return self.samples
 
     def __getitem__(self, idx):
 
-        # Not all zip files have validation data
-        while True:
-            entry = random.choice(self.ziparray)
-            if len(entry.get('l')) > 0:
-                break
+        # Find the zip file containing the index
+        entry = bisect.bisect(self.idxs, idx)
+        if entry >= len(self.idxs):
+            raise StopIteration()
+        idx -= self.idxs[entry]
+        entry = self.ziparray[entry]
+        filename = entry.get('filename')
 
-        # The while loop is protect against occasional exceptions while reading zip files
-        while True:
-            img_or_label = random.choice(entry.get('l'))
-            basename = img_or_label.split('/')[-1].split('.')[0]
-            if 'img/' in img_or_label:
-                img = img_or_label
-                label = next(filter(lambda s: 'labels/' in s and basename in s, entry.get('l')))
-            elif 'labels/' in img_or_label:
-                label = img_or_label
-                img = next(filter(lambda s: 'img/' in s and basename in s, entry.get('l')))
-            else:
-                raise Exception()
-
-            try:
-                with entry.get('z').open(img) as f:
-                    if img.endswith('.png'):
-                        img = np.copy(np.asarray(Image.open(f)))
-                    elif img.endswith('.npy'):
-                        img = np.load(f).transpose(2, 0, 1)
-                    else:
-                        raise Exception()
-            except:
-                continue
-
-            try:
-                with entry.get('z').open(label) as f:
-                    if label.endswith('.png'):
-                        label = np.copy(np.asarray(Image.open(f)))
-                    elif label.endswith('.npy'):
-                        label = np.load(f)
-                    else:
-                        raise Exception()
-            except:
-                continue
-
-            break
+        img = entry.get('imgs')[idx]
+        label = entry.get('labels')[idx]
+        with ZipFile(filename, 'r') as z:
+            with z.open(img) as f:
+                if img.endswith('.png'):
+                    img = np.copy(np.asarray(Image.open(f)))
+                elif img.endswith('.npy'):
+                    img = np.load(f).transpose(2, 0, 1)
+                else:
+                    return None
+            with z.open(label) as f:
+                if label.endswith('.png'):
+                    label = np.copy(np.asarray(Image.open(f)))
+                elif label.endswith('.npy'):
+                    label = np.load(f)
+                else:
+                    return None
 
         img = img.astype(np.float32)
-
         if self.is_aviris and self.is_cloud:
-            labels1 = ((label == 2)*1.0).astype(np.float32)
-            labels2 = ((label == 3)*1.0).astype(np.float32)
-            return (img, labels1, labels2)
+            labels = (label == 2)*1 + (label == 3)*2
+            return (img, labels)
         elif not self.is_aviris and self.is_cloud:
-            labels = ((label == 1)*1.0).astype(np.float32)
+            labels = (label == 1)*1
             return (img, labels)
         else:
-            raise Exception()
+            return None
