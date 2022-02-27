@@ -244,12 +244,14 @@ class SegmentationDataset(torch.utils.data.Dataset):
 
             break
 
+        img = img.astype(np.float32)
+
         if self.is_aviris and self.is_cloud:
-            labels = (label == 2)*1
-            labels[label == 3] = 2
+            labels1 = ((label == 2)*1.0).astype(np.float32)
+            labels2 = ((label == 3)*1.0).astype(np.float32)
+            return (img, labels1, labels2)
         elif not self.is_aviris and self.is_cloud:
-            labels = (label == 1)*1
+            labels = ((label == 1)*1.0).astype(np.float32)
+            return (img, labels)
         else:
             raise Exception()
-
-        return (img.astype(np.float32), labels)

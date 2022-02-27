@@ -29,12 +29,12 @@ class CloudModel(torch.nn.Module):
             self.in_nuggets[str(n)] = Nugget(
                 kernel_size=1,
                 in_channels=n,
-                out_channels=64)
+                out_channels=12)
         self.cheaplab = torch.hub.load(
             'jamesmcclain/CheapLab:38af8e6cd084fc61792f29189158919c69d58c6a',
             'make_cheaplab_model',
-            num_channels=64,
-            out_channels=3)
+            num_channels=12,
+            out_channels=2)
 
     def forward(self, x):
         [w, h] = x.shape[-2:]
