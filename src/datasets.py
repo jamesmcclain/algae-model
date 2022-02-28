@@ -222,20 +222,26 @@ class SegmentationDataset(torch.utils.data.Dataset):
         img = entry.get('imgs')[idx]
         label = entry.get('labels')[idx]
         with ZipFile(filename, 'r') as z:
-            with z.open(img) as f:
-                if img.endswith('.png'):
-                    img = np.copy(np.asarray(Image.open(f)))
-                elif img.endswith('.npy'):
-                    img = np.load(f).transpose(2, 0, 1)
-                else:
-                    return None
-            with z.open(label) as f:
-                if label.endswith('.png'):
-                    label = np.copy(np.asarray(Image.open(f)))
-                elif label.endswith('.npy'):
-                    label = np.load(f)
-                else:
-                    return None
+            try:
+                with z.open(img) as f:
+                    if img.endswith('.png'):
+                        img = np.copy(np.asarray(Image.open(f)))
+                    elif img.endswith('.npy'):
+                        img = np.load(f).transpose(2, 0, 1)
+                    else:
+                        return None
+            except:
+                return None
+            try:
+                with z.open(label) as f:
+                    if label.endswith('.png'):
+                        label = np.copy(np.asarray(Image.open(f)))
+                    elif label.endswith('.npy'):
+                        label = np.load(f)
+                    else:
+                        return None
+            except:
+                return None
 
         img = img.astype(np.float32)
         if self.is_aviris and self.is_cloud:
