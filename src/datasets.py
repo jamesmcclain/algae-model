@@ -1,5 +1,12 @@
 import warnings
+import random
+import tqdm
+import glob
+import math
+import bisect
+from PIL import Image
 from typing import List
+from zipfile import ZipFile
 
 import numpy as np
 import torch
@@ -168,3 +175,80 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
             data = augment1(data)
 
         return (data, label, label2)
+
+
+class SegmentationDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset_path: str,
+                 is_aviris: bool = True,
+                 is_cloud: bool = False,
+                 is_validation: bool = False):
+
+        assert is_cloud + 0 == 1
+        self.is_aviris = is_aviris
+        self.is_cloud = is_cloud
+        self.ziparray = []
+        self.idxs = []
+        self.samples = 0
+
+        for filename in tqdm.tqdm(glob.glob(f'{dataset_path}/*.zip')):
+            with ZipFile(filename, 'r') as z:
+                if is_validation:
+                    imgs = list(filter(lambda s: 'valid/' in s and 'img/' in s, z.namelist()))
+                    labels = list(filter(lambda s: 'valid/' in s and 'labels/' in s, z.namelist()))
+                elif not is_validation:
+                    imgs = list(filter(lambda s: 'train/' in s and 'img/' in s, z.namelist()))
+                    labels = list(filter(lambda s: 'train/' in s and 'labels/' in s, z.namelist()))
+                imgs.sort()
+                labels.sort()
+                entry = {'filename': filename, 'imgs': imgs, 'labels': labels}
+                if len(imgs) > 0 and len(imgs) == len(labels):
+                    self.samples += len(imgs)
+                    self.ziparray.append(entry)
+                    self.idxs.append(self.samples)
+
+    def __len__(self):
+        return self.samples
+
+    def __getitem__(self, idx):
+
+        # Find the zip file containing the index
+        entry = bisect.bisect(self.idxs, idx)
+        if entry >= len(self.idxs):
+            raise StopIteration()
+        idx -= self.idxs[entry]
+        entry = self.ziparray[entry]
+        filename = entry.get('filename')
+
+        img = entry.get('imgs')[idx]
+        label = entry.get('labels')[idx]
+        with ZipFile(filename, 'r') as z:
+            try:
+                with z.open(img) as f:
+                    if img.endswith('.png'):
+                        img = np.copy(np.asarray(Image.open(f)))
+                    elif img.endswith('.npy'):
+                        img = np.load(f).transpose(2, 0, 1)
+                    else:
+                        return None
+            except:
+                return None
+            try:
+                with z.open(label) as f:
+                    if label.endswith('.png'):
+                        label = np.copy(np.asarray(Image.open(f)))
+                    elif label.endswith('.npy'):
+                        label = np.load(f)
+                    else:
+                        return None
+            except:
+                return None
+
+        img = img.astype(np.float32)
+        if self.is_aviris and self.is_cloud:
+            labels = (label == 2)*1 + (label == 3)*2
+            return (img, labels)
+        elif not self.is_aviris and self.is_cloud:
+            labels = (label == 1)*1
+            return (img, labels)
+        else:
+            return None
