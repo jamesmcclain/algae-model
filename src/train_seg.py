@@ -21,10 +21,9 @@ def cli_parser():
     parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
     parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
     parser.add_argument('--aviris-l1-path', required=False, type=str, default=None)
-    parser.add_argument('--epochs', required=False, type=int, default=107)
-    parser.add_argument('--pseudo-epoch-size', required=False, type=int, nargs='+', default=[10007, 10007, 503])
+    parser.add_argument('--epochs', required=False, type=int, default=17)
     parser.add_argument('--lr', required=False, type=float, default=1e-3)
-    parser.add_argument('--num-workers', required=False, type=int, default=1)
+    parser.add_argument('--num-workers', required=False, type=int, default=2)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
     return parser
 
@@ -106,14 +105,13 @@ if __name__ == '__main__':
     for i in range(args.epochs):
         # choice_index = len(train_dls)-1 if (i < (args.epochs // 5)) else i % len(train_dls)
         choice_index = i % len(train_dls)
-        batches_per_epoch = args.pseudo_epoch_size[choice_index] // args.batch_size
 
         train_losses = []
         choice = train_dls[choice_index]
         dl = choice.get('dl')
         shadows = choice.get('shadows')
         model.train()
-        for (j, batch) in tqdm.tqdm(enumerate(dl)):
+        for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
             out = model(batch[0].to(device))
             if shadows:
                 loss = obj_ce(out, batch[1].to(device))
@@ -124,13 +122,14 @@ if __name__ == '__main__':
             opt.step()
             opt.zero_grad()
         avg_train_loss = np.mean(train_losses)
+        log.info(f'epoch={i:<3d} avg_train_loss={avg_train_loss:1.5f}')
 
         valid_losses = []
         choice = valid_dls[choice_index]
         dl = choice.get('dl')
         shadows = choice.get('shadows')
         model.eval()
-        for (j, batch) in tqdm.tqdm(enumerate(dl)):
+        for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Validation'):
             with torch.no_grad():
                 out = model(batch[0].to(device))
                 if shadows:
@@ -139,11 +138,10 @@ if __name__ == '__main__':
                     loss = obj_ce(out[:, [0, 1], :, :], batch[1].to(device))
                 valid_losses.append(loss.item())
         avg_valid_loss = np.mean(valid_losses)
-        log.info(f'epoch={i:<3d} avg_train_loss={avg_train_loss:1.5f} avg_valid_loss={avg_valid_loss:1.5f}')
+        log.info(f'epoch={i:<3d} avg_valid_loss={avg_valid_loss:1.5f}')
 
-        if i % 7 == 0:
-            log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
-            torch.save(model.state_dict(), '/tmp/checkpoint.pth')
+        log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
+        torch.save(model.state_dict(), '/tmp/checkpoint.pth')
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
