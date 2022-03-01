@@ -17,14 +17,15 @@ from datasets import SegmentationDataset
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--batch-size', required=False, type=int, default=8)
-    parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
-    parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
     parser.add_argument('--aviris-l1-path', required=False, type=str, default=None)
+    parser.add_argument('--batch-size', required=False, type=int, default=8)
     parser.add_argument('--epochs', required=False, type=int, default=17)
     parser.add_argument('--lr', required=False, type=float, default=1e-3)
     parser.add_argument('--num-workers', required=False, type=int, default=2)
+    parser.add_argument('--pth-load', required=False, type=str)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
+    parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
+    parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
     return parser
 
 
@@ -61,34 +62,34 @@ if __name__ == '__main__':
     if args.sentinel_l1c_path is not None:
         ds = SegmentationDataset(
             args.sentinel_l1c_path,
-            is_aviris=False, is_cloud=True, is_validation=False)
+            is_aviris=False, is_validation=False)
         dl = DataLoader(ds, **dataloader_cfg)
         train_dls.append({'dl': dl, 'shadows': False})
         ds = SegmentationDataset(
             args.sentinel_l1c_path,
-            is_aviris=False, is_cloud=True, is_validation=True)
+            is_aviris=False, is_validation=True)
         dl = DataLoader(ds, **dataloader_cfg)
         valid_dls.append({'dl': dl, 'shadows': False})
     if args.sentinel_l2a_path is not None:
         ds = SegmentationDataset(
             args.sentinel_l2a_path,
-            is_aviris=False, is_cloud=True, is_validation=False)
+            is_aviris=False, is_validation=False)
         dl = DataLoader(ds, **dataloader_cfg)
         train_dls.append({'dl': dl, 'shadows': False})
         ds = SegmentationDataset(
             args.sentinel_l2a_path,
-            is_aviris=False, is_cloud=True, is_validation=True)
+            is_aviris=False, is_validation=True)
         dl = DataLoader(ds, **dataloader_cfg)
         valid_dls.append({'dl': dl, 'shadows': False})
     if args.aviris_l1_path is not None:
         ds = SegmentationDataset(
             args.aviris_l1_path,
-            is_aviris=True, is_cloud=True, is_validation=False)
+            is_aviris=True, is_validation=False)
         dl = DataLoader(ds, **dataloader_cfg)
         train_dls.append({'dl': dl, 'shadows': True})
         ds = SegmentationDataset(
             args.aviris_l1_path,
-            is_aviris=True, is_cloud=True, is_validation=True)
+            is_aviris=True, is_validation=True)
         dl = DataLoader(ds, **dataloader_cfg)
         valid_dls.append({'dl': dl, 'shadows': True})
 
@@ -96,11 +97,13 @@ if __name__ == '__main__':
 
     from cloud import make_cloud_model
     model = make_cloud_model(in_channels=[13, 12, 224])
+    if args.pth_load is not None:
+        model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')
     model.to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
-    obj_ce = torch.nn.CrossEntropyLoss().to(device)
+    obj_bce = torch.nn.BCEWithLogitsLoss().to(device)
 
     for i in range(args.epochs):
         # choice_index = len(train_dls)-1 if (i < (args.epochs // 5)) else i % len(train_dls)
@@ -114,9 +117,16 @@ if __name__ == '__main__':
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
             out = model(batch[0].to(device))
             if shadows:
-                loss = obj_ce(out, batch[1].to(device))
+                cloud_gt = (batch[1] == 2).type(out.type())
+                cloud_shadow_gt = (batch[1] == 3).type(out.type())
+                cloud_pred = out[:, 1, :, :] - 0.5*(out[:, 0, :, :] + out[:, 2, :, :])
+                cloud_shadow_pred = out[:, 2, :, :] - 0.5*(out[:, 0, :, :] + out[:, 1, :, :])
+                loss = obj_bce(cloud_pred, cloud_gt.to(device))
+                loss += obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
             else:
-                loss = obj_ce(out[:, [0, 1], :, :], batch[1].to(device))
+                cloud_gt = (batch[1] == 1).type(out.type())
+                cloud_pred = out[:, 1, :, :] - out[:, 0:, :, :]
+                loss = obj_bce(cloud_pred, cloud_gt.to(device))
             train_losses.append(loss.item())
             loss.backward()
             opt.step()
@@ -133,9 +143,16 @@ if __name__ == '__main__':
             with torch.no_grad():
                 out = model(batch[0].to(device))
                 if shadows:
-                    loss = obj_ce(out, batch[1].to(device))
+                    cloud_gt = (batch[1] == 2).type(out.type())
+                    cloud_shadow_gt = (batch[1] == 3).type(out.type())
+                    cloud_pred = out[:, 1, :, :] - 0.5*(out[:, 0, :, :] + out[:, 2, :, :])
+                    cloud_shadow_pred = out[:, 2, :, :] - 0.5*(out[:, 0, :, :] + out[:, 1, :, :])
+                    loss = obj_bce(cloud_pred, cloud_gt.to(device))
+                    loss += obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
                 else:
-                    loss = obj_ce(out[:, [0, 1], :, :], batch[1].to(device))
+                    cloud_gt = (batch[1] == 1).type(out.type())
+                    cloud_pred = out[:, 1, :, :] - out[:, 0:, :, :]
+                    loss = obj_bce(cloud_pred, cloud_gt.to(device))
                 valid_losses.append(loss.item())
         avg_valid_loss = np.mean(valid_losses)
         log.info(f'epoch={i:<3d} avg_valid_loss={avg_valid_loss:1.5f}')
