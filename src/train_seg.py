@@ -20,8 +20,8 @@ def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--aviris-l1-path', required=False, type=str, default=None)
     parser.add_argument('--batch-size', required=False, type=int, default=8)
-    parser.add_argument('--epochs', required=False, type=int, default=17)
-    parser.add_argument('--lr', required=False, type=float, default=1e-3)
+    parser.add_argument('--epochs', required=False, type=int, default=33)
+    parser.add_argument('--lr', required=False, type=float, default=1e-4)
     parser.add_argument('--num-workers', required=False, type=int, default=1)
     parser.add_argument('--pth-load', required=False, type=str)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
@@ -30,6 +30,12 @@ def cli_parser():
 
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
+
+    parser.add_argument('--freeze-cheaplab', required=False, dest='freeze_cheaplab', action='store_true')
+    parser.set_defaults(freeze_cheaplab=False)
+
+    parser.add_argument('--tree', required=False, dest='tree', action='store_true')
+    parser.set_defaults(tree=False)
 
     return parser
 
@@ -136,12 +142,16 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')
     log.info(f'freeze_bn={args.freeze_bn}')
+    log.info(f'freeze_cheaplab={args.freeze_cheaplab}')
+    log.info(f'tree={args.tree}')
 
     model.to(device)
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     obj_bce = torch.nn.BCEWithLogitsLoss().to(device)
+    obj_ce = torch.nn.CrossEntropyLoss(ignore_index=0xff).to(device)
 
+    best_valid_loss = 1e6
     for i in range(args.epochs):
         # choice_index = len(train_dls)-1 if (i < (args.epochs // 5)) else i % len(train_dls)
         choice_index = i % len(train_dls)
@@ -151,11 +161,17 @@ if __name__ == '__main__':
         dl = choice.get('dl')
         shadows = choice.get('shadows')
         model.train()
+        if args.freeze_cheaplab:
+            freeze(model.cheaplab)
         if args.freeze_bn and i > 0:
             freeze_bn(model)
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
             out = model(batch[0].to(device))
-            if shadows:
+            if args.tree:
+                labels = batch[1].long()
+                labels[labels > 2] = 0xff
+                loss = obj_ce(out, labels.to(device))
+            elif shadows:
                 cloud_gt = (batch[1] == 2).type(out.type())
                 cloud_shadow_gt = (batch[1] == 3).type(out.type())
                 cloud_pred = out[:, 1, :, :] - out[:, 0, :, :]
@@ -182,7 +198,11 @@ if __name__ == '__main__':
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Validation'):
             with torch.no_grad():
                 out = model(batch[0].to(device))
-                if shadows:
+                if args.tree:
+                    labels = batch[1].long()
+                    labels[labels > 2] = 0xff
+                    loss = obj_ce(out, labels.to(device))
+                elif shadows:
                     cloud_gt = (batch[1] == 2).type(out.type())
                     cloud_shadow_gt = (batch[1] == 3).type(out.type())
                     cloud_pred = out[:, 1, :, :] - out[:, 0, :, :]
@@ -198,6 +218,10 @@ if __name__ == '__main__':
         avg_valid_loss = np.mean(valid_losses)
         log.info(f'epoch={i:<3d} avg_valid_loss={avg_valid_loss:1.5f}')
 
+        if avg_valid_loss < best_valid_loss:
+            log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
+            torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
+            best_valid_loss = avg_valid_loss
         log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
         torch.save(model.state_dict(), '/tmp/checkpoint.pth')
 

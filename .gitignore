@@ -12,3 +12,5 @@ scripts/*.json
 *.results
 *.tif
 *.tiff
+*.tar
+*.zip
