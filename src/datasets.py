@@ -180,12 +180,9 @@ class AlgaeClassificationDataset(torch.utils.data.Dataset):
 class SegmentationDataset(torch.utils.data.Dataset):
     def __init__(self, dataset_path: str,
                  is_aviris: bool = True,
-                 is_cloud: bool = False,
                  is_validation: bool = False):
 
-        assert is_cloud + 0 == 1
         self.is_aviris = is_aviris
-        self.is_cloud = is_cloud
         self.ziparray = []
         self.idxs = []
         self.samples = 0
@@ -220,7 +217,7 @@ class SegmentationDataset(torch.utils.data.Dataset):
         filename = entry.get('filename')
 
         img = entry.get('imgs')[idx]
-        label = entry.get('labels')[idx]
+        labels = entry.get('labels')[idx]
         with ZipFile(filename, 'r') as z:
             try:
                 with z.open(img) as f:
@@ -233,22 +230,15 @@ class SegmentationDataset(torch.utils.data.Dataset):
             except:
                 return None
             try:
-                with z.open(label) as f:
-                    if label.endswith('.png'):
-                        label = np.copy(np.asarray(Image.open(f)))
-                    elif label.endswith('.npy'):
-                        label = np.load(f)
+                with z.open(labels) as f:
+                    if labels.endswith('.png'):
+                        labels = np.copy(np.asarray(Image.open(f)))
+                    elif labels.endswith('.npy'):
+                        labels = np.load(f)
                     else:
                         return None
             except:
                 return None
 
         img = img.astype(np.float32)
-        if self.is_aviris and self.is_cloud:
-            labels = (label == 2)*1 + (label == 3)*2
-            return (img, labels)
-        elif not self.is_aviris and self.is_cloud:
-            labels = (label == 1)*1
-            return (img, labels)
-        else:
-            return None
+        return (img, labels)
