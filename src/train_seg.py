@@ -166,7 +166,8 @@ if __name__ == '__main__':
         if args.freeze_bn and i > 0:
             freeze_bn(model)
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
-            out = model(batch[0].to(device))
+            b = batch[0].to(device)
+            out = model(b)
             if args.tree:
                 labels = batch[1].long()
                 labels[labels > 2] = 0xff

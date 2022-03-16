@@ -3,6 +3,7 @@ from typing import List
 import torch
 import torch.hub
 import torchvision as tv
+import torch.nn.functional as F
 
 
 class Nugget(torch.nn.Module):
@@ -40,6 +41,8 @@ class CloudModel(torch.nn.Module):
         [w, h] = x.shape[-2:]
         n = x.shape[-3]
         out = x
+
+        F.normalize(out, dim=1)
 
         nugget = self.in_nuggets[str(n)]
         if nugget is None:
