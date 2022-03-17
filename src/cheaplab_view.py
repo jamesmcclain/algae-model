@@ -163,7 +163,7 @@ if __name__ == '__main__':
                     continue
                 windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
                 if args.architecture == 'cloud':
-                    prob = torch.sigmoid(model(windows))
+                    prob = torch.sigmoid(model(windows)[0])
                 elif 'algae' in args.architecture:
                     prob = torch.sigmoid(model[str(bandcount)](windows))
 
