@@ -13,5 +13,6 @@ scripts/*.json
 *.tif
 *.tiff
 *.tar
+*.tar.lz
 *.zip
 *.geojson
