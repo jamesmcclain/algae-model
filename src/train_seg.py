@@ -137,7 +137,8 @@ if __name__ == '__main__':
     assert len(train_dls) == len(valid_dls)
 
     from cloud import make_cloud_model
-    model = make_cloud_model(in_channels=[13, 12, 224])
+    # model = make_cloud_model(in_channels=[13, 12, 224])
+    model = make_cloud_model(in_channels=[224])
     if args.pth_load is not None:
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')
