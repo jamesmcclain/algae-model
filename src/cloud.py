@@ -35,11 +35,10 @@ class CloudModel(torch.nn.Module):
         super().__init__()
         self.rs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(3)])
         self.gs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(3)])
-        self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(7)])
+        self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(3)])
 
     def forward(self, x):
-        shp = x.shape
-        pixels = shp[0] * shp[-2] * shp[-3] * (3+3+7)
+        x[x < 0] = 0
         F.normalize(x, dim=1)
 
         rs = [m(x) for m in self.rs]
@@ -61,7 +60,9 @@ class CloudModel(torch.nn.Module):
         ]
         out = torch.cat(out, dim=1)
         F.normalize(out, dim=1)
-        goodness = (torch.sum(rs) + torch.sum(gs) + torch.sum(bgs) - pixels) / pixels
+        goodness = -torch.mean(torch.std(rs, dim=1, unbiased=True)) \
+            - torch.mean(torch.std(gs, dim=1, unbiased=True)) \
+            - torch.mean(torch.std(bgs, dim=1, unbiased=True))
 
         return (out, goodness)
 
