@@ -171,27 +171,24 @@ if __name__ == '__main__':
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
             out = model(batch[0].to(device))
             if args.tree:
-                # labels = batch[1].long()
-                # labels[labels > 1] = 2
-                # loss = obj_ce(out[0], labels.to(device))
                 labels = batch[1].to(device)
                 red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], labels < 2)
                 red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], labels < 2)
                 red_gt = torch.masked_select((labels == 1), labels < 2).float()
                 x = float(j) / lendl
                 loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt) + x*out[1]
-            # elif shadows:
-            #     cloud_gt = (batch[1] == 2).type(out[0].type())
-            #     cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
-            #     cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-            #     cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
-            #     loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
-            #     loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
-            #     loss = loss1 + loss2
-            # else:
-            #     cloud_gt = (batch[1] == 1).type(out[0].type())
-            #     cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-            #     loss = obj_bce(cloud_pred, cloud_gt.to(device))
+            elif shadows:
+                cloud_gt = (batch[1] == 2).type(out[0].type())
+                cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
+                cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
+                loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
+                loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
+                loss = loss1 + loss2
+            else:
+                cloud_gt = (batch[1] == 1).type(out[0].type())
+                cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                loss = obj_bce(cloud_pred, cloud_gt.to(device))
             loss.backward()
             if not math.isnan(loss.item()):
                 train_losses.append(loss.item())
@@ -209,26 +206,23 @@ if __name__ == '__main__':
             with torch.no_grad():
                 out = model(batch[0].to(device))
                 if args.tree:
-                    # labels = batch[1].long()
-                    # labels[labels > 1] = 2
-                    # loss = obj_ce(out[0], labels.to(device))
                     labels = batch[1].to(device)
                     red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], labels < 2)
                     red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], labels < 2)
                     red_gt = torch.masked_select((labels == 1), labels < 2).float()
                     loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt)
-                # elif shadows:
-                #     cloud_gt = (batch[1] == 2).type(out[0].type())
-                #     cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
-                #     cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                #     cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
-                #     loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
-                #     loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
-                #     loss = loss1 + loss2
-                # else:
-                #     cloud_gt = (batch[1] == 1).type(out[0].type())
-                #     cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                #     loss = obj_bce(cloud_pred, cloud_gt.to(device))
+                elif shadows:
+                    cloud_gt = (batch[1] == 2).type(out[0].type())
+                    cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
+                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                    cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
+                    loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
+                    loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
+                    loss = loss1 + loss2
+                else:
+                    cloud_gt = (batch[1] == 1).type(out[0].type())
+                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                    loss = obj_bce(cloud_pred, cloud_gt.to(device))
                 if not math.isnan(loss.item()):
                     valid_losses.append(loss.item())
         avg_valid_loss = np.mean(valid_losses)
