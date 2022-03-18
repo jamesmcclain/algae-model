@@ -32,9 +32,6 @@ def cli_parser():
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
 
-    parser.add_argument('--freeze-cheaplab', required=False, dest='freeze_cheaplab', action='store_true')
-    parser.set_defaults(freeze_cheaplab=False)
-
     parser.add_argument('--tree', required=False, dest='tree', action='store_true')
     parser.set_defaults(tree=False)
 
@@ -144,7 +141,6 @@ if __name__ == '__main__':
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')
     log.info(f'freeze_bn={args.freeze_bn}')
-    log.info(f'freeze_cheaplab={args.freeze_cheaplab}')
     log.info(f'tree={args.tree}')
 
     model.to(device)
@@ -164,8 +160,6 @@ if __name__ == '__main__':
         lendl = len(dl)
         shadows = choice.get('shadows')
         model.train()
-        if args.freeze_cheaplab:
-            freeze(model.cheaplab)
         if args.freeze_bn and i > 0:
             freeze_bn(model)
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
