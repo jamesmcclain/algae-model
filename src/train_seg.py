@@ -13,6 +13,7 @@ import torchvision as tv
 import tqdm
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
+import torch.nn.functional as F
 
 from datasets import SegmentationDataset
 
@@ -28,7 +29,7 @@ def cli_parser():
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
     parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
     parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
-
+    parser.add_argument('--wanted-chips', required=False, type=float, default=0.25)
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
 
@@ -76,6 +77,14 @@ def unfreeze_bn(m):
             child.train()
         else:
             unfreeze_bn(child)
+
+
+def bsi(batch):
+    swir2 = batch[:, 194, :, :]
+    red = batch[:, 27, :, :]
+    blue = batch[:, 9, :, :]
+    nir = batch[:, 46, :, :]
+    return (swir2 + red - nir - blue)/(swir2 + red + nir + blue)
 
 
 dataloader_cfg = {
@@ -140,8 +149,13 @@ if __name__ == '__main__':
     if args.pth_load is not None:
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')
-    log.info(f'freeze_bn={args.freeze_bn}')
-    log.info(f'tree={args.tree}')
+    log.info(f'freeze_bn = {args.freeze_bn}')
+    log.info(f'tree = {args.tree}')
+    log.info(f'epochs = {args.epochs}')
+    log.info(f'batch-size = {args.batch_size}')
+    log.info(f'num-workers = {args.num_workers}')
+    log.info(f'pth-load = {args.pth_load}')
+    log.info(f'pth-save = {args.pth_save}')
 
     model.to(device)
 
@@ -160,15 +174,26 @@ if __name__ == '__main__':
         lendl = len(dl)
         shadows = choice.get('shadows')
         model.train()
+        wanted_pixels = 512 * 512 * args.wanted_chips
         if args.freeze_bn and i > 0:
             freeze_bn(model)
         for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
             out = model(batch[0].to(device))
             if args.tree:
-                labels = batch[1].to(device)
-                red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], labels < 2)
-                red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], labels < 2)
-                red_gt = torch.masked_select((labels == 1), labels < 2).float()
+                trees = batch[1] < 2
+                red_trees = (batch[1] == 1).to(device)
+                non_soil = bsi(batch[0]) < 0.0
+                mask = (trees * non_soil)
+                while True:
+                    got_pixels = mask.sum().item()
+                    if got_pixels <= wanted_pixels:
+                        break
+                    p = wanted_pixels / got_pixels
+                    mask = mask * (torch.rand(mask.shape) > p)
+                mask = mask.to(device)
+                red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], mask)
+                red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], mask)
+                red_gt = torch.masked_select(red_trees, mask).float()
                 x = float(j) / lendl
                 loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt) + x*out[1]
             elif shadows:
@@ -183,9 +208,9 @@ if __name__ == '__main__':
                 cloud_gt = (batch[1] == 1).type(out[0].type())
                 cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
                 loss = obj_bce(cloud_pred, cloud_gt.to(device))
-            loss.backward()
             if not math.isnan(loss.item()):
                 train_losses.append(loss.item())
+                loss.backward()
                 opt.step()
             opt.zero_grad()
         avg_train_loss = np.mean(train_losses)
@@ -200,10 +225,13 @@ if __name__ == '__main__':
             with torch.no_grad():
                 out = model(batch[0].to(device))
                 if args.tree:
-                    labels = batch[1].to(device)
-                    red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], labels < 2)
-                    red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], labels < 2)
-                    red_gt = torch.masked_select((labels == 1), labels < 2).float()
+                    trees = batch[1] < 2
+                    red_trees = (batch[1] == 1).to(device)
+                    non_soil = bsi(batch[0]) < 0.0
+                    mask = (trees * non_soil).to(device)
+                    red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], mask).to(device)
+                    red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], mask).to(device)
+                    red_gt = torch.masked_select(red_trees, mask).float()
                     loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt)
                 elif shadows:
                     cloud_gt = (batch[1] == 2).type(out[0].type())

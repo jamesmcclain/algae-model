@@ -6,6 +6,22 @@ import torchvision as tv
 import torch.nn.functional as F
 
 
+def greens_function(x, x0, eps=1e-3):
+    out = -((x - x0) * (x - x0)) / (eps * eps)
+    out = torch.exp(out)
+    return out
+
+
+def entropy_function(x):
+    s = torch.sigmoid(x)
+    pno_narrow = torch.mean(greens_function(s, 0.25, 1.0 / 16))
+    pno_wide = torch.mean(greens_function(s, 0.25, 1.0 / 8))
+    pyes_narrow = torch.mean(greens_function(s, 0.75, 1.0 / 16))
+    pyes_wide = torch.mean(greens_function(s, 0.75, 1.0 / 8))
+    return ((pyes_narrow * torch.log(pyes_wide)) +
+            (pno_narrow * torch.log(pno_wide)))
+
+
 class Nugget(torch.nn.Module):
     def __init__(self, kernel_size, in_channels, out_channels):
         super(Nugget, self).__init__()
@@ -33,25 +49,22 @@ class Nugget(torch.nn.Module):
 class CloudModel(torch.nn.Module):
     def __init__(self, in_channels: List[int]):
         super().__init__()
-        self.rs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(3)])
-        self.gs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(3)])
-        self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(3)])
+        magic_number = 3
+        self.rs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
+        self.gs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
+        self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
 
     def forward(self, x):
         x[x < 0] = 0
-        F.normalize(x, dim=1)
 
         rs = [m(x) for m in self.rs]
         rs = torch.cat(rs, dim=1)
-        F.normalize(rs, dim=1)
 
         gs = [m(x) for m in self.gs]
         gs = torch.cat(gs, dim=1)
-        F.normalize(gs, dim=1)
 
         bgs = [m(x) for m in self.bgs]
         bgs = torch.cat(bgs, dim=1)
-        F.normalize(bgs, dim=1)
 
         out = [
             torch.unsqueeze(torch.amax(rs, dim=1), dim=1),
@@ -59,10 +72,9 @@ class CloudModel(torch.nn.Module):
             torch.unsqueeze(torch.amax(bgs, dim=1), dim=1)
         ]
         out = torch.cat(out, dim=1)
-        F.normalize(out, dim=1)
-        goodness = -torch.mean(torch.std(rs, dim=1, unbiased=True)) \
-            - torch.mean(torch.std(gs, dim=1, unbiased=True)) \
-            - torch.mean(torch.std(bgs, dim=1, unbiased=True))
+        goodness = entropy_function(out[:, 0, :, :]) \
+            + entropy_function(out[:, 1, :, :]) \
+            - entropy_function(out[:, 0, :, :] + out[:, 1, :, :])
 
         return (out, goodness)
 
