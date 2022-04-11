@@ -1,6 +1,8 @@
 # flake8: noqa
 
 import hashlib
+import re
+
 from functools import partial
 
 from pystac.stac_io import DefaultStacIO, StacIO
@@ -48,7 +50,7 @@ def root_of_tarball(tarball: str) -> str:
     return catalog_root
 
 
-def hrefs_from_catalog(catalog: Catalog) -> Tuple[str, str]:
+def hrefs_from_catalog(catalog: Catalog, N: int = None) -> Tuple[str, str]:
 
     def find_label_collection(c):
         return 'label' in str.lower(c.description)
@@ -68,8 +70,15 @@ def hrefs_from_catalog(catalog: Catalog) -> Tuple[str, str]:
             imagery_href = None
         label_href = pystac_workaround(item.assets.get('data').href)
         label_hrefs.append(label_href)
+        if imagery_href.startswith('./'):
+            imagery_href = re.sub('^\.\/[0-9]+-', './', imagery_href)
+        imagery_href = imagery_href.replace('14060at01p00r17', '140603t01p00r17')
         imagery_hrefs.append(imagery_href)
 
+    if N is not None:
+        N = int(N)
+        label_hrefs = [label_hrefs[N]]
+        imagery_hrefs = [imagery_hrefs[N]]
     return (label_hrefs, imagery_hrefs)
 
 
@@ -111,7 +120,8 @@ def get_scenes(
     class_id_filter_dict: dict,
     catalog_dir: str, imagery_dir: str,
     train_crops: List[CropOffsets] = [],
-    val_crops: List[CropOffsets] = []
+    val_crops: List[CropOffsets] = [],
+    N: int = None
 ) -> Tuple[List[SceneConfig], List[SceneConfig]]:
 
     train_scenes = []
@@ -122,7 +132,7 @@ def get_scenes(
             catalog = catalog.strip()
             catalog = f'{catalog_dir}/{catalog}'
             catalog = catalog.replace('s3://', '/vsizip/vsis3/')
-            (labelss, imagerys) = hrefs_from_catalog(Catalog.from_file(root_of_tarball(catalog)))
+            (labelss, imagerys) = hrefs_from_catalog(Catalog.from_file(root_of_tarball(catalog)), N)
             imagery_name = imagery = catalog_imagery.get('imagery')
             if imagery_name is not None:
                 imagery = imagery.strip()
@@ -159,7 +169,8 @@ def get_config(runner,
                json,
                dataset,
                catalog_dir='/vsizip//workdir', imagery_dir='/opt/data',
-               chip_sz=512):
+               chip_sz=512,
+               N=None):
 
     chip_sz = int(chip_sz)
 
@@ -206,7 +217,7 @@ def get_config(runner,
                         class_id_filter_dict,
                         catalog_dir, imagery_dir,
                         train_crops=train_crops,
-                        val_crops=val_crops)
+                        val_crops=val_crops, N=N)
 
     train_scenes, validation_scenes = scenes
 

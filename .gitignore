@@ -1,3 +1,5 @@
+moop.py
+*.ovr
 chip2/*
 rastervision/*.zip
 data/pth/old/*
@@ -13,4 +15,6 @@ scripts/*.json
 *.tif
 *.tiff
 *.tar
+*.tar.lz
 *.zip
+*.geojson

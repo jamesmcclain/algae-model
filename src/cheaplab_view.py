@@ -58,7 +58,7 @@ if __name__ == '__main__':
             pretrained=False)
     elif args.architecture == 'cloud':
         from cloud import make_cloud_model
-        model = make_cloud_model(in_channels=[13, 12, 224])
+        model = make_cloud_model(in_channels=[224])
     else:
         raise Exception()
 
@@ -163,7 +163,7 @@ if __name__ == '__main__':
                     continue
                 windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
                 if args.architecture == 'cloud':
-                    prob = torch.sigmoid(model(windows))
+                    prob = torch.sigmoid(model(windows)[0])
                 elif 'algae' in args.architecture:
                     prob = torch.sigmoid(model[str(bandcount)](windows))
 
