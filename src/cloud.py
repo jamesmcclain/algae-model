@@ -55,6 +55,9 @@ class CloudModel(torch.nn.Module):
         self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
 
     def forward(self, x):
+        if len(x.shape) != 4:
+            raise Exception('ruh-roh')
+
         x[x < 0] = 0
 
         rs = [m(x) for m in self.rs]
@@ -72,9 +75,8 @@ class CloudModel(torch.nn.Module):
             torch.unsqueeze(torch.amax(bgs, dim=1), dim=1)
         ]
         out = torch.cat(out, dim=1)
-        goodness = entropy_function(out[:, 0, :, :]) \
-            + entropy_function(out[:, 1, :, :]) \
-            - entropy_function(out[:, 0, :, :] + out[:, 1, :, :])
+        # goodness = entropy_function(out[:, 0, :, :]) + entropy_function(out[:, 1, :, :])
+        goodness = None
 
         return (out, goodness)
 
