@@ -173,108 +173,83 @@ if __name__ == '__main__':
     obj_bce = torch.nn.BCEWithLogitsLoss().to(device)
     obj_ce = torch.nn.CrossEntropyLoss(ignore_index=0xff).to(device)
 
+    wanted_pixels = 512 * 512 * args.wanted_chips
+
     best_valid_loss = 1e6
     for i in range(args.epochs):
+
         choice_index = i % len(train_dls)
+        losses = []
 
-        train_losses = []
-        choice = train_dls[choice_index]
-        dl = choice.get('dl')
-        lendl = len(dl)
-        shadows = choice.get('shadows')
-        model.train()
-        wanted_pixels = 512 * 512 * args.wanted_chips
-        if args.freeze_bn and i > 0:
-            freeze_bn(model)
+        for mode in ['train', 'valid']:
+            if mode == 'train':
+                choice = train_dls[choice_index]
+                model.train()
+            elif mode == 'valid':
+                choice = valid_dls[choice_index]
+                model.eval()
 
-        for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
-            if args.tree:
-                soil = bsi(batch[0])
-                vegitation = ndvi(batch[0])
-                red_stage = (batch[1] == 1) * (soil < 0.0) * (vegitation > 0.0)
-                green_stage = (batch[1] == 0) * (soil < 0.0) * (vegitation > 0.0)
-                other = (batch[1] > 1) + (soil > 0.0) + (vegitation < 0.0)
-                mask = red_stage + green_stage + other
-                while mask.sum().item() > wanted_pixels:
-                    p = wanted_pixels / mask.sum().item()
-                    mask = mask * (torch.rand(mask.shape) < p)
+            dl = choice.get('dl')
+            lendl = len(dl)
+            shadows = choice.get('shadows')
+            if args.freeze_bn and i > 0:
+                freeze_bn(model)
 
-                pixels_of_interest = torch.masked_select(
-                    batch[0].to(device),
-                    mask.unsqueeze(dim=1).to(device))
-                c = batch[0].shape[1]
-                n = int(math.sqrt(len(pixels_of_interest) / c))
-                pixels_of_interest = pixels_of_interest[:c*n*n].reshape(1, c, n, n)
-
-                labels_of_interest = torch.masked_select(0*red_stage + 1*green_stage + 2*other, mask).to(device)
-                labels_of_interest = labels_of_interest.reshape(-1)[:n*n].reshape(1, n, n)
-
-                out = model(pixels_of_interest)
-                loss = obj_ce(out[0], labels_of_interest)
-            else:
-                out = model(batch[0].to(device))
-                if shadows:
-                    cloud_gt = (batch[1] == 2).type(out[0].type())
-                    cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
-                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                    cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
-                    loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
-                    loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
-                    loss = loss1 + loss2
-                else:
-                    cloud_gt = (batch[1] == 1).type(out[0].type())
-                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                    loss = obj_bce(cloud_pred, cloud_gt.to(device))
-            if not math.isnan(loss.item()):
-                train_losses.append(loss.item())
-                loss.backward()
-                opt.step()
-            opt.zero_grad()
-        avg_train_loss = np.mean(train_losses)
-        log.info(f'epoch={i:<3d} avg_train_loss={avg_train_loss:1.5f}')
-
-        valid_losses = []
-        choice = valid_dls[choice_index]
-        dl = choice.get('dl')
-        shadows = choice.get('shadows')
-        model.eval()
-        for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Validation'):
-            with torch.no_grad():
-                out = model(batch[0].to(device))
+            for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
                 if args.tree:
-                    trees = batch[1] < 2
-                    red_trees = (batch[1] == 1).to(device)
-                    non_soil = bsi(batch[0]) < 0.0
-                    mask = (trees * non_soil).to(device)
-                    red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], mask).to(device)
-                    red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], mask).to(device)
-                    red_gt = torch.masked_select(red_trees, mask).float()
-                    loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt)
-                elif shadows:
-                    cloud_gt = (batch[1] == 2).type(out[0].type())
-                    cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
-                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                    cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
-                    loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
-                    loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
-                    loss = loss1 + loss2
-                else:
-                    cloud_gt = (batch[1] == 1).type(out[0].type())
-                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                    loss = obj_bce(cloud_pred, cloud_gt.to(device))
-                if not math.isnan(loss.item()):
-                    valid_losses.append(loss.item())
-        avg_valid_loss = np.mean(valid_losses)
-        log.info(f'epoch={i:<3d} avg_valid_loss={avg_valid_loss:1.5f}')
+                    soil = bsi(batch[0])
+                    vegitation = ndvi(batch[0])
+                    red_stage = (batch[1] == 1) * (soil < 0.0) * (vegitation > 0.0)
+                    green_stage = (batch[1] == 0) * (soil < 0.0) * (vegitation > 0.0)
+                    other = (batch[1] > 1) + (soil > 0.0) + (vegitation < 0.0)
+                    mask = red_stage + green_stage + other
+                    while mask.sum().item() > wanted_pixels:
+                        p = wanted_pixels / mask.sum().item()
+                        mask = mask * (torch.rand(mask.shape) < p)
 
-        if avg_valid_loss < best_valid_loss:
-            log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
-            torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
-            best_valid_loss = avg_valid_loss
+                    pixels_of_interest = torch.masked_select(
+                        batch[0].to(device),
+                        mask.unsqueeze(dim=1).to(device))
+                    c = batch[0].shape[1]
+                    n = int(math.sqrt(len(pixels_of_interest) / c))
+                    pixels_of_interest = pixels_of_interest[:c*n*n].reshape(1, c, n, n)
+
+                    labels_of_interest = torch.masked_select(0*red_stage + 1*green_stage + 2*other, mask).to(device)
+                    labels_of_interest = labels_of_interest.reshape(-1)[:n*n].reshape(1, n, n)
+
+                    out = model(pixels_of_interest)
+                    loss = obj_ce(out[0], labels_of_interest)
+                else:
+                    out = model(batch[0].to(device))
+                    if shadows:
+                        cloud_gt = (batch[1] == 2).type(out[0].type())
+                        cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
+                        cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                        cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
+                        loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
+                        loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
+                        loss = loss1 + loss2
+                    else:
+                        cloud_gt = (batch[1] == 1).type(out[0].type())
+                        cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                        loss = obj_bce(cloud_pred, cloud_gt.to(device))
+
+                if not math.isnan(loss.item()):
+                    losses.append(loss.item())
+                    loss.backward()
+                    opt.step()
+                opt.zero_grad()
+
+            avg_loss = np.mean(losses)
+            log.info(f'epoch={i:<3d} avg {mode} loss = {avg_loss:1.5f}')
+
+            if mode == 'valid' and avg_loss < best_valid_loss:
+                log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
+                torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
+                best_valid_loss = avg_loss
+
         log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
         torch.save(model.state_dict(), '/tmp/checkpoint.pth')
-
-        print()
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
