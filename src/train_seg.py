@@ -21,15 +21,15 @@ from datasets import SegmentationDataset
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--aviris-l1-path', required=False, type=str, default=None)
-    parser.add_argument('--batch-size', required=False, type=int, default=4)
+    parser.add_argument('--batch-size', required=False, type=int, default=6)
     parser.add_argument('--epochs', required=False, type=int, default=33)
     parser.add_argument('--lr', required=False, type=float, default=1e-4)
-    parser.add_argument('--num-workers', required=False, type=int, default=1)
+    parser.add_argument('--num-workers', required=False, type=int, default=4)
     parser.add_argument('--pth-load', required=False, type=str)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
     parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
     parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
-    parser.add_argument('--wanted-chips', required=False, type=float, default=0.5)
+    parser.add_argument('--wanted-chips', required=False, type=float, default=0.75)
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
 
@@ -163,6 +163,7 @@ if __name__ == '__main__':
     log.info(f'tree = {args.tree}')
     log.info(f'epochs = {args.epochs}')
     log.info(f'batch-size = {args.batch_size}')
+    log.info(f'wanted-size = {args.wanted_chips}')
     log.info(f'num-workers = {args.num_workers}')
     log.info(f'pth-load = {args.pth_load}')
     log.info(f'pth-save = {args.pth_save}')
@@ -180,6 +181,7 @@ if __name__ == '__main__':
 
         choice_index = i % len(train_dls)
         losses = []
+        fills = []
 
         for mode in ['train', 'valid']:
             if mode == 'train':
@@ -195,26 +197,30 @@ if __name__ == '__main__':
             if args.freeze_bn and i > 0:
                 freeze_bn(model)
 
-            for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
+            desc = 'Training' if mode == 'train' else 'Validation'
+            for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc=desc):
                 if args.tree:
                     soil = bsi(batch[0])
                     vegitation = ndvi(batch[0])
                     red_stage = (batch[1] == 1) * (soil < 0.0) * (vegitation > 0.0)
                     green_stage = (batch[1] == 0) * (soil < 0.0) * (vegitation > 0.0)
-                    other = (batch[1] > 1) + (soil > 0.0) + (vegitation < 0.0)
-                    mask = red_stage + green_stage + other
+                    other = (batch[1] > 1) + (soil > 0.3) + (vegitation < -0.3)
+                    mask = (red_stage + green_stage + other).to(device)
+                    fill = mask.sum().item() / wanted_pixels
+                    fills.append(fill)
                     while mask.sum().item() > wanted_pixels:
                         p = wanted_pixels / mask.sum().item()
-                        mask = mask * (torch.rand(mask.shape) < p)
-
+                        mask = mask * (torch.rand(mask.shape).to(device) < p)
+                    if mask.sum().item() == 0:
+                        continue
                     pixels_of_interest = torch.masked_select(
                         batch[0].to(device),
-                        mask.unsqueeze(dim=1).to(device))
+                        mask.unsqueeze(dim=1))
                     c = batch[0].shape[1]
                     n = int(math.sqrt(len(pixels_of_interest) / c))
                     pixels_of_interest = pixels_of_interest[:c*n*n].reshape(1, c, n, n)
 
-                    labels_of_interest = torch.masked_select(0*red_stage + 1*green_stage + 2*other, mask).to(device)
+                    labels_of_interest = torch.masked_select((0*red_stage + 1*green_stage + 2*other).to(device), mask)
                     labels_of_interest = labels_of_interest.reshape(-1)[:n*n].reshape(1, n, n)
 
                     out = model(pixels_of_interest)
@@ -241,7 +247,8 @@ if __name__ == '__main__':
                 opt.zero_grad()
 
             avg_loss = np.mean(losses)
-            log.info(f'epoch={i:<3d} avg {mode} loss = {avg_loss:1.5f}')
+            avg_fill = np.mean(fills)
+            log.info(f'epoch={i:<3d} avg-fill={avg_fill:1.2f} avg-{mode}-loss={avg_loss:1.5f}')
 
             if mode == 'valid' and avg_loss < best_valid_loss:
                 log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')

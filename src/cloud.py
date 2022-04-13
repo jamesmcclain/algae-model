@@ -59,6 +59,8 @@ class CloudModel(torch.nn.Module):
             raise Exception('ruh-roh')
 
         x[x < 0] = 0
+        # x = x - x.mean(dim=(2, 3), keepdim=True)
+        F.normalize(x, dim=1, out=x)
 
         rs = [m(x) for m in self.rs]
         rs = torch.cat(rs, dim=1)
