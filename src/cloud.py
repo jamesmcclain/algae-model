@@ -23,7 +23,7 @@ def entropy_function(x):
 
 
 class Nugget(torch.nn.Module):
-    def __init__(self, kernel_size, in_channels, out_channels):
+    def __init__(self, kernel_size, in_channels, out_channels, preshrink):
         super(Nugget, self).__init__()
         self.conv2ds = torch.nn.ModuleDict()
         for n in in_channels:
@@ -34,7 +34,7 @@ class Nugget(torch.nn.Module):
             'jamesmcclain/CheapLab:38af8e6cd084fc61792f29189158919c69d58c6a',
             'make_cheaplab_model',
             num_channels=10,
-            preshrink=8,
+            preshrink=preshrink,
             out_channels=out_channels)
 
     def forward(self, x):
@@ -47,20 +47,18 @@ class Nugget(torch.nn.Module):
 
 
 class CloudModel(torch.nn.Module):
-    def __init__(self, in_channels: List[int]):
+    def __init__(self, in_channels: List[int], preshrink: int):
         super().__init__()
         magic_number = 3
-        self.rs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
-        self.gs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
-        self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1) for i in range(magic_number)])
+        self.rs = torch.nn.ModuleList([Nugget(1, in_channels, 1, preshrink) for i in range(magic_number)])
+        self.gs = torch.nn.ModuleList([Nugget(1, in_channels, 1, preshrink) for i in range(magic_number)])
+        self.bgs = torch.nn.ModuleList([Nugget(1, in_channels, 1, preshrink) for i in range(magic_number)])
 
     def forward(self, x):
         if len(x.shape) != 4:
             raise Exception('ruh-roh')
 
         x[x < 0] = 0
-        # x = x - x.mean(dim=(2, 3), keepdim=True)
-        # F.normalize(x, dim=1, out=x)
 
         rs = [m(x) for m in self.rs]
         rs = torch.cat(rs, dim=1)
@@ -83,6 +81,6 @@ class CloudModel(torch.nn.Module):
         return (out, goodness)
 
 
-def make_cloud_model(in_channels: List[int]):
-    model = CloudModel(in_channels=in_channels)
+def make_cloud_model(in_channels: List[int], preshrink: int = 8):
+    model = CloudModel(in_channels=in_channels, preshrink=preshrink)
     return model

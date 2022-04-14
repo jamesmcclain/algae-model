@@ -25,11 +25,13 @@ def cli_parser():
     parser.add_argument('--epochs', required=False, type=int, default=33)
     parser.add_argument('--lr', required=False, type=float, default=1e-4)
     parser.add_argument('--num-workers', required=False, type=int, default=4)
+    parser.add_argument('--preshrink', required=False, type=int, default=8)
     parser.add_argument('--pth-load', required=False, type=str)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
     parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
     parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
     parser.add_argument('--wanted-chips', required=False, type=float, default=0.75)
+
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
 
@@ -155,7 +157,7 @@ if __name__ == '__main__':
 
     from cloud import make_cloud_model
     # model = make_cloud_model(in_channels=[13, 12, 224])
-    model = make_cloud_model(in_channels=[224])
+    model = make_cloud_model(in_channels=[224], preshrink=args.preshrink)
     if args.pth_load is not None:
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')

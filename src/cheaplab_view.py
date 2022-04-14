@@ -58,7 +58,7 @@ if __name__ == '__main__':
             pretrained=False)
     elif args.architecture == 'cloud':
         from cloud import make_cloud_model
-        model = make_cloud_model(in_channels=[224])
+        model = make_cloud_model(in_channels=[224], preshrink=1)
     else:
         raise Exception()
 
