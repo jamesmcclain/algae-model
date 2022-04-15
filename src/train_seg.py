@@ -21,15 +21,17 @@ from datasets import SegmentationDataset
 def cli_parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--aviris-l1-path', required=False, type=str, default=None)
-    parser.add_argument('--batch-size', required=False, type=int, default=8)
+    parser.add_argument('--batch-size', required=False, type=int, default=6)
     parser.add_argument('--epochs', required=False, type=int, default=33)
     parser.add_argument('--lr', required=False, type=float, default=1e-4)
-    parser.add_argument('--num-workers', required=False, type=int, default=1)
+    parser.add_argument('--num-workers', required=False, type=int, default=4)
+    parser.add_argument('--preshrink', required=False, type=int, default=8)
     parser.add_argument('--pth-load', required=False, type=str)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
     parser.add_argument('--sentinel-l1c-path', required=False, type=str, default=None)
     parser.add_argument('--sentinel-l2a-path', required=False, type=str, default=None)
-    parser.add_argument('--wanted-chips', required=False, type=float, default=0.25)
+    parser.add_argument('--wanted-chips', required=False, type=float, default=0.75)
+
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
 
@@ -84,7 +86,17 @@ def bsi(batch):
     red = batch[:, 27, :, :]
     blue = batch[:, 9, :, :]
     nir = batch[:, 46, :, :]
-    return (swir2 + red - nir - blue)/(swir2 + red + nir + blue)
+    tmp = (swir2 + red - nir - blue)/(swir2 + red + nir + blue)
+    tmp[tmp.isnan()] = 0
+    return tmp
+
+
+def ndvi(batch):
+    nir = batch[:, 46, :, :]
+    red = batch[:, 27, :, :]
+    tmp = (nir - red)/(nir + red)
+    tmp[tmp.isnan()] = 0
+    return tmp
 
 
 dataloader_cfg = {
@@ -145,7 +157,7 @@ if __name__ == '__main__':
 
     from cloud import make_cloud_model
     # model = make_cloud_model(in_channels=[13, 12, 224])
-    model = make_cloud_model(in_channels=[224])
+    model = make_cloud_model(in_channels=[224], preshrink=args.preshrink)
     if args.pth_load is not None:
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device('cuda')
@@ -153,6 +165,7 @@ if __name__ == '__main__':
     log.info(f'tree = {args.tree}')
     log.info(f'epochs = {args.epochs}')
     log.info(f'batch-size = {args.batch_size}')
+    log.info(f'wanted-size = {args.wanted_chips}')
     log.info(f'num-workers = {args.num_workers}')
     log.info(f'pth-load = {args.pth_load}')
     log.info(f'pth-save = {args.pth_save}')
@@ -163,101 +176,89 @@ if __name__ == '__main__':
     obj_bce = torch.nn.BCEWithLogitsLoss().to(device)
     obj_ce = torch.nn.CrossEntropyLoss(ignore_index=0xff).to(device)
 
+    wanted_pixels = 512 * 512 * args.wanted_chips
+
     best_valid_loss = 1e6
     for i in range(args.epochs):
-        # choice_index = len(train_dls)-1 if (i < (args.epochs // 5)) else i % len(train_dls)
+
         choice_index = i % len(train_dls)
+        losses = []
+        fills = []
 
-        train_losses = []
-        choice = train_dls[choice_index]
-        dl = choice.get('dl')
-        lendl = len(dl)
-        shadows = choice.get('shadows')
-        model.train()
-        wanted_pixels = 512 * 512 * args.wanted_chips
-        if args.freeze_bn and i > 0:
-            freeze_bn(model)
-        for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Training'):
-            out = model(batch[0].to(device))
-            if args.tree:
-                trees = batch[1] < 2
-                red_trees = (batch[1] == 1).to(device)
-                non_soil = bsi(batch[0]) < 0.0
-                mask = (trees * non_soil)
-                while True:
-                    got_pixels = mask.sum().item()
-                    if got_pixels <= wanted_pixels:
-                        break
-                    p = wanted_pixels / got_pixels
-                    mask = mask * (torch.rand(mask.shape) > p)
-                mask = mask.to(device)
-                red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], mask)
-                red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], mask)
-                red_gt = torch.masked_select(red_trees, mask).float()
-                x = float(j) / lendl
-                loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt) + x*out[1]
-            elif shadows:
-                cloud_gt = (batch[1] == 2).type(out[0].type())
-                cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
-                cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
-                loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
-                loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
-                loss = loss1 + loss2
-            else:
-                cloud_gt = (batch[1] == 1).type(out[0].type())
-                cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                loss = obj_bce(cloud_pred, cloud_gt.to(device))
-            if not math.isnan(loss.item()):
-                train_losses.append(loss.item())
-                loss.backward()
-                opt.step()
-            opt.zero_grad()
-        avg_train_loss = np.mean(train_losses)
-        log.info(f'epoch={i:<3d} avg_train_loss={avg_train_loss:1.5f}')
+        for mode in ['train', 'valid']:
+            if mode == 'train':
+                choice = train_dls[choice_index]
+                model.train()
+            elif mode == 'valid':
+                choice = valid_dls[choice_index]
+                model.eval()
 
-        valid_losses = []
-        choice = valid_dls[choice_index]
-        dl = choice.get('dl')
-        shadows = choice.get('shadows')
-        model.eval()
-        for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc='Validation'):
-            with torch.no_grad():
-                out = model(batch[0].to(device))
+            dl = choice.get('dl')
+            lendl = len(dl)
+            shadows = choice.get('shadows')
+            if args.freeze_bn and i > 0:
+                freeze_bn(model)
+
+            desc = 'Training' if mode == 'train' else 'Validation'
+            for (j, batch) in tqdm.tqdm(enumerate(dl), total=len(dl), desc=desc):
                 if args.tree:
-                    trees = batch[1] < 2
-                    red_trees = (batch[1] == 1).to(device)
-                    non_soil = bsi(batch[0]) < 0.0
-                    mask = (trees * non_soil).to(device)
-                    red_pred1 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 1, :, :], mask).to(device)
-                    red_pred2 = torch.masked_select(out[0][:, 0, :, :] - out[0][:, 2, :, :], mask).to(device)
-                    red_gt = torch.masked_select(red_trees, mask).float()
-                    loss = obj_bce(red_pred1, red_gt) + obj_bce(red_pred2, red_gt)
-                elif shadows:
-                    cloud_gt = (batch[1] == 2).type(out[0].type())
-                    cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
-                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                    cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
-                    loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
-                    loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
-                    loss = loss1 + loss2
-                else:
-                    cloud_gt = (batch[1] == 1).type(out[0].type())
-                    cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
-                    loss = obj_bce(cloud_pred, cloud_gt.to(device))
-                if not math.isnan(loss.item()):
-                    valid_losses.append(loss.item())
-        avg_valid_loss = np.mean(valid_losses)
-        log.info(f'epoch={i:<3d} avg_valid_loss={avg_valid_loss:1.5f}')
+                    soil = bsi(batch[0])
+                    vegitation = ndvi(batch[0])
+                    red_stage = (batch[1] == 1) * (soil < 0.0) * (vegitation > 0.0)
+                    green_stage = (batch[1] == 0) * (soil < 0.0) * (vegitation > 0.0)
+                    other = (batch[1] > 1) + (soil > 0.3) + (vegitation < -0.3)
+                    mask = (red_stage + green_stage + other).to(device)
+                    fill = mask.sum().item() / wanted_pixels
+                    fills.append(fill)
+                    while mask.sum().item() > wanted_pixels:
+                        p = wanted_pixels / mask.sum().item()
+                        mask = mask * (torch.rand(mask.shape).to(device) < p)
+                    if mask.sum().item() == 0:
+                        continue
+                    pixels_of_interest = torch.masked_select(
+                        batch[0].to(device),
+                        mask.unsqueeze(dim=1))
+                    c = batch[0].shape[1]
+                    n = int(math.sqrt(len(pixels_of_interest) / c))
+                    pixels_of_interest = pixels_of_interest[:c*n*n].reshape(1, c, n, n)
 
-        if avg_valid_loss < best_valid_loss:
-            log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
-            torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
-            best_valid_loss = avg_valid_loss
+                    labels_of_interest = torch.masked_select((0*red_stage + 1*green_stage + 2*other).to(device), mask)
+                    labels_of_interest = labels_of_interest.reshape(-1)[:n*n].reshape(1, n, n)
+
+                    out = model(pixels_of_interest)
+                    loss = obj_ce(out[0], labels_of_interest)
+                else:
+                    out = model(batch[0].to(device))
+                    if shadows:
+                        cloud_gt = (batch[1] == 2).type(out[0].type())
+                        cloud_shadow_gt = (batch[1] == 3).type(out[0].type())
+                        cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                        cloud_shadow_pred = out[0][:, 2, :, :] - out[0][:, 0, :, :]
+                        loss1 = obj_bce(cloud_pred, cloud_gt.to(device))
+                        loss2 = obj_bce(cloud_shadow_pred, cloud_shadow_gt.to(device))
+                        loss = loss1 + loss2
+                    else:
+                        cloud_gt = (batch[1] == 1).type(out[0].type())
+                        cloud_pred = out[0][:, 1, :, :] - out[0][:, 0, :, :]
+                        loss = obj_bce(cloud_pred, cloud_gt.to(device))
+
+                if not math.isnan(loss.item()):
+                    losses.append(loss.item())
+                    loss.backward()
+                    opt.step()
+                opt.zero_grad()
+
+            avg_loss = np.mean(losses)
+            avg_fill = np.mean(fills)
+            log.info(f'epoch={i:<3d} avg-fill={avg_fill:1.2f} avg-{mode}-loss={avg_loss:1.5f}')
+
+            if mode == 'valid' and avg_loss < best_valid_loss:
+                log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
+                torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
+                best_valid_loss = avg_loss
+
         log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
         torch.save(model.state_dict(), '/tmp/checkpoint.pth')
-
-        print()
 
     if args.pth_save is not None:
         log.info(f'Saving model to {args.pth_save}')
