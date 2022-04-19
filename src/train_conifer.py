@@ -24,7 +24,7 @@ def cli_parser():
     parser.add_argument('--masks', required=True, type=str, nargs='+')
     parser.add_argument('--batch-size', required=False, type=int, default=6)
     parser.add_argument('--val-batch-size', required=False, type=int, default=8)
-    parser.add_argument('--epochs', required=False, type=int, default=33)
+    parser.add_argument('--epochs', required=False, type=int, default=241)
     parser.add_argument('--lr', required=False, type=float, default=1e-4)
     parser.add_argument('--preshrink', required=False, type=int, default=8)
     parser.add_argument('--pth-load', required=False, type=str)
@@ -134,71 +134,76 @@ if __name__ == '__main__':
         if args.freeze_bn and i > 0:
             freeze_bn(model)
 
-        for (imagery_tiff, mask_tiff) in pairs:
-            with rio.open(imagery_tiff, 'r') as imagery_ds, rio.open(mask_tiff, 'r') as mask_ds:
-                width = imagery_ds.width
-                height = imagery_ds.height
-                assert(mask_ds.width == width)
-                assert(mask_ds.height == height)
-                assert(imagery_ds.count == 224)
-                assert(mask_ds.count == 1)
+        for mode in ['train', 'val']:
+            losses = []
 
-                endwidth = width if width % n == 0 else width-n
-                endheight = height if height % n == 0 else height-n
-                windows = [(x, y) for x in range(0, endwidth, n) for y in range(0, endheight, n)]
-                train_windows = [(x, y) for (x, y) in windows if x % (4*n) != n]
-                train_windows = list(chunks(train_windows, args.batch_size))
-                val_windows = [(x, y) for (x, y) in windows if x % (4*n) == n]
-                val_windows = list(chunks(val_windows, args.val_batch_size))
+            for (imagery_tiff, mask_tiff) in pairs:
+                with rio.open(imagery_tiff, 'r') as imagery_ds, rio.open(mask_tiff, 'r') as mask_ds:
+                    width = imagery_ds.width
+                    height = imagery_ds.height
+                    assert(mask_ds.width == width)
+                    assert(mask_ds.height == height)
+                    assert(imagery_ds.count == 224)
+                    assert(mask_ds.count == 1)
 
-                for (mode, windows) in [('train', train_windows), ('val', val_windows)]:
-                    losses = []
+                    endwidth = width if width % n == 0 else width-n
+                    endheight = height if height % n == 0 else height-n
+                    windows = [(x, y) for x in range(0, endwidth, n) for y in range(0, endheight, n)]
+
+                    if mode == 'train':
+                        windows = [(x, y) for (x, y) in windows if x % (4*n) != n]
+                        windows = list(chunks(windows, args.batch_size))
+                        model.train()
+                    elif mode == 'val':
+                        windows = [(x, y) for (x, y) in windows if x % (4*n) == n]
+                        windows = list(chunks(windows, args.val_batch_size))
+                        model.eval()
 
                     for batch in tqdm.tqdm(windows):
-                        chips = [imagery_ds.read(window=Window(x, y, n, n)) for (x, y) in batch]
-                        chips = np.stack(chips, axis=0).astype(np.float32)
-                        chips = torch.from_numpy(chips).to(device=device)
+                            chips = [imagery_ds.read(window=Window(x, y, n, n)) for (x, y) in batch]
+                            chips = np.stack(chips, axis=0).astype(np.float32)
+                            chips = torch.from_numpy(chips).to(device=device)
 
-                        masks = [mask_ds.read(window=Window(x, y, n, n)) for (x, y) in batch]
-                        masks = np.stack(masks, axis=0)
-                        masks = torch.from_numpy(masks).long().to(device=device)
-                        (b, _, x, y) = masks.shape
-                        masks = masks.reshape(b, x, y)
+                            masks = [mask_ds.read(window=Window(x, y, n, n)) for (x, y) in batch]
+                            masks = np.stack(masks, axis=0)
+                            masks = torch.from_numpy(masks).long().to(device=device)
+                            (b, _, x, y) = masks.shape
+                            masks = masks.reshape(b, x, y)
 
-                        bsi_tmp = bsi(chips)
-                        ndvi_tmp = ndvi(chips)
-                        red_conifer = ((masks == 1) * (bsi_tmp < 1.0/6) * (bsi_tmp > -1.0/6) * (ndvi_tmp > 1.0/3) * (ndvi_tmp < 2.0/3))
-                        green_conifer = ((masks == 1) * (bsi_tmp < -1.0/6) * (ndvi_tmp > 2.0/3))
-                        unknown  = ((masks == 1) * ~red_conifer * ~green_conifer)
+                            bsi_tmp = bsi(chips)
+                            ndvi_tmp = ndvi(chips)
+                            red_conifer = ((masks == 1) * (bsi_tmp < 1.0/6) * (bsi_tmp > -1.0/6) * (ndvi_tmp > 1.0/3) * (ndvi_tmp < 2.0/3))
+                            green_conifer = ((masks == 1) * (bsi_tmp < -1.0/6) * (ndvi_tmp > 2.0/3))
+                            unknown  = ((masks == 1) * ~red_conifer * ~green_conifer)
 
-                        masks[masks == 0] = 2
-                        masks[red_conifer] = 0
-                        masks[green_conifer] = 1
-                        masks[unknown] = 0xff
+                            masks[masks == 0] = 2
+                            masks[red_conifer] = 0
+                            masks[green_conifer] = 1
+                            masks[unknown] = 0xff
 
-                        if mode == 'train':
-                            out = model(chips)
-                            loss = obj_ce(out[0], masks)
-                            if not math.isnan(loss.item()):
-                                losses.append(loss.item())
-                                loss.backward()
-                                opt.step()
-                                opt.zero_grad()
-                        elif mode == 'val':
-                            with torch.no_grad():
+                            if mode == 'train':
                                 out = model(chips)
                                 loss = obj_ce(out[0], masks)
                                 if not math.isnan(loss.item()):
                                     losses.append(loss.item())
+                                    loss.backward()
+                                    opt.step()
+                                    opt.zero_grad()
+                            elif mode == 'val':
+                                with torch.no_grad():
+                                    out = model(chips)
+                                    loss = obj_ce(out[0], masks)
+                                    if not math.isnan(loss.item()):
+                                        losses.append(loss.item())
 
-                    avg_loss = np.mean(losses)
-                    log.info(f'avg {mode} loss = {avg_loss}')
-                    if mode == 'val' and avg_loss < best_val_loss:
-                        log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
-                        torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
-                        best_val_loss = avg_loss
-                    if mode == 'train' and avg_loss < best_train_loss:
-                        best_train_loss = avg_loss
+            avg_loss = np.mean(losses)
+            log.info(f'epoch {i}: avg {mode} loss = {avg_loss}')
+            if mode == 'val' and avg_loss < best_val_loss:
+                log.info(f'Saving checkpoint to /tmp/best-checkpoint.pth')
+                torch.save(model.state_dict(), '/tmp/best-checkpoint.pth')
+                best_val_loss = avg_loss
+            if mode == 'train' and avg_loss < best_train_loss:
+                best_train_loss = avg_loss
 
         log.info(f'Saving checkpoint to /tmp/checkpoint.pth')
         torch.save(model.state_dict(), '/tmp/checkpoint.pth')
