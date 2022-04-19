@@ -20,17 +20,17 @@ from torch.utils.data import DataLoader
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--imagery', required=True, type=str, nargs='+')
-    parser.add_argument('--masks', required=True, type=str, nargs='+')
     parser.add_argument('--batch-size', required=False, type=int, default=6)
-    parser.add_argument('--val-batch-size', required=False, type=int, default=8)
+    parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--epochs', required=False, type=int, default=241)
+    parser.add_argument('--imagery', required=True, type=str, nargs='+')
     parser.add_argument('--lr', required=False, type=float, default=1e-4)
+    parser.add_argument('--masks', required=True, type=str, nargs='+')
     parser.add_argument('--preshrink', required=False, type=int, default=8)
     parser.add_argument('--pth-load', required=False, type=str)
     parser.add_argument('--pth-save', required=False, type=str, default='model.pth')
+    parser.add_argument('--val-batch-size', required=False, type=int, default=8)
     parser.add_argument('--window-size', required=False, type=int, default=256)
-    parser.add_argument('--device', required=False, type=str, default='cuda')
 
     parser.add_argument('--freeze-bn', required=False, dest='freeze_bn', action='store_true')
     parser.set_defaults(freeze_bn=False)
@@ -131,7 +131,8 @@ if __name__ == '__main__':
     best_val_loss = math.inf
 
     for i in range(args.epochs):
-        if args.freeze_bn and i > 0:
+        if args.freeze_bn and i == 1:
+            log.info('BN layers frozen')
             freeze_bn(model)
 
         for mode in ['train', 'val']:
@@ -183,7 +184,9 @@ if __name__ == '__main__':
 
                             if mode == 'train':
                                 out = model(chips)
-                                loss = obj_ce(out[0], masks)
+                                loss = obj_ce(out[0], masks) + \
+                                    obj_bce(out[0][:,1,:,:], green_conifer.float()) + \
+                                    obj_bce(out[0][:,0,:,:], red_conifer.float())
                                 if not math.isnan(loss.item()):
                                     losses.append(loss.item())
                                     loss.backward()
