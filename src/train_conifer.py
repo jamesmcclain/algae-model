@@ -125,9 +125,10 @@ if __name__ == '__main__':
     log.info(f'imagery = {args.imagery}')
     log.info(f'masks = {args.masks}')
 
+    weight = torch.tensor([13/21.0, 7/21.0, 1/21.0])
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr)
     obj_bce = torch.nn.BCEWithLogitsLoss().to(device)
-    obj_ce = torch.nn.CrossEntropyLoss(ignore_index=0xff).to(device)
+    obj_ce = torch.nn.CrossEntropyLoss(weight=weight, ignore_index=0xff).to(device)
 
     best_train_loss = math.inf
     best_val_loss = math.inf
@@ -186,9 +187,10 @@ if __name__ == '__main__':
 
                             if mode == 'train':
                                 out = model(chips)
-                                loss = obj_ce(out, masks) + \
-                                    obj_bce(out[:,1,:,:], green_conifer.float()) + \
-                                    obj_bce(out[:,0,:,:], red_conifer.float())
+                                loss = obj_ce(out, masks)
+                                # + \
+                                #     obj_bce(out[:,1,:,:], green_conifer.float()) + \
+                                #     obj_bce(out[:,0,:,:], red_conifer.float())
                                 if not math.isnan(loss.item()):
                                     losses.append(loss.item())
                                     loss.backward()
