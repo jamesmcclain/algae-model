@@ -102,8 +102,10 @@ if __name__ == '__main__':
     pairs = list(zip(args.imagery, args.masks))
     n = args.window_size
 
-    from cloud import make_cloud_model
-    model = make_cloud_model(in_channels=[224], preshrink=args.preshrink)
+    # from cloud import make_cloud_model
+    # model = make_cloud_model(in_channels=[224], preshrink=args.preshrink)
+    from tree import make_tree_model
+    model = make_tree_model(preshrink=args.preshrink)
     if args.pth_load is not None:
         model.load_state_dict(torch.load(args.pth_load), strict=True)
     device = torch.device(args.device)
@@ -184,9 +186,9 @@ if __name__ == '__main__':
 
                             if mode == 'train':
                                 out = model(chips)
-                                loss = obj_ce(out[0], masks) + \
-                                    obj_bce(out[0][:,1,:,:], green_conifer.float()) + \
-                                    obj_bce(out[0][:,0,:,:], red_conifer.float())
+                                loss = obj_ce(out, masks) + \
+                                    obj_bce(out[:,1,:,:], green_conifer.float()) + \
+                                    obj_bce(out[:,0,:,:], red_conifer.float())
                                 if not math.isnan(loss.item()):
                                     losses.append(loss.item())
                                     loss.backward()
@@ -195,7 +197,7 @@ if __name__ == '__main__':
                             elif mode == 'val':
                                 with torch.no_grad():
                                     out = model(chips)
-                                    loss = obj_ce(out[0], masks)
+                                    loss = obj_ce(out, masks)
                                     if not math.isnan(loss.item()):
                                         losses.append(loss.item())
 

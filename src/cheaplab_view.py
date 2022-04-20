@@ -16,7 +16,7 @@ from rasterio.windows import Window
 
 def cli_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--architecture', required=True, type=str, choices=['algae', 'algae-github', 'cloud'])
+    parser.add_argument('--architecture', required=True, type=str, choices=['algae', 'algae-github', 'cloud', 'tree'])
     parser.add_argument('--chunksize', required=False, type=int, default=256)
     parser.add_argument('--device', required=False, type=str, default='cuda', choices=['cuda', 'cpu'])
     parser.add_argument('--infile', required=True, type=str, nargs='+')
@@ -59,12 +59,15 @@ if __name__ == '__main__':
     elif args.architecture == 'cloud':
         from cloud import make_cloud_model
         model = make_cloud_model(in_channels=[224], preshrink=1)
+    elif args.architecture == 'tree':
+        from tree import make_tree_model
+        model = make_tree_model(preshrink=1)
     else:
         raise Exception()
 
-    if args.architecture == 'cloud':
+    if args.architecture in {'tree', 'cloud'}:
         model.load_state_dict(torch.load(args.pth_load), strict=True)
-    elif 'algae' in args.architectures:
+    elif 'algae' in args.architecture:
         state = torch.load(args.pth_load)
         for key in list(state.keys()):
             if 'cheaplab' not in key:
@@ -164,6 +167,8 @@ if __name__ == '__main__':
                 windows = torch.from_numpy(windows).to(dtype=torch.float32, device=device)
                 if args.architecture == 'cloud':
                     prob = torch.sigmoid(model(windows)[0])
+                elif args.architecture == 'tree':
+                    prob = torch.sigmoid(model(windows))
                 elif 'algae' in args.architecture:
                     prob = torch.sigmoid(model[str(bandcount)](windows))
 
