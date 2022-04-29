@@ -88,6 +88,7 @@ if __name__ == '__main__':
             return filename
         args.outfile = [transmute(f) for f in args.infile]
 
+    magic_nodata = -107.0
     for (infile, outfile) in zip(args.infile, args.outfile):
         log.info(outfile)
         with rio.open(infile, 'r') as infile_ds, torch.no_grad():
@@ -99,6 +100,7 @@ if __name__ == '__main__':
                 'bigtiff': 'yes',
                 'sparse_ok': 'yes',
                 'tiled': 'yes',
+                'nodata': magic_nodata,
             })
             width = infile_ds.width
             height = infile_ds.height
@@ -106,6 +108,8 @@ if __name__ == '__main__':
 
             data_out = torch.zeros((3, height, width),
                                 dtype=torch.float32).to(device)
+
+            nodata_mask = infile_ds.read_masks([1,2,3])
 
             if bandcount == 224:
                 indexes = list(range(1, 224 + 1))
@@ -171,7 +175,6 @@ if __name__ == '__main__':
                     prob = torch.sigmoid(model(windows))
                 elif 'algae' in args.architecture:
                     prob = torch.sigmoid(model[str(bandcount)](windows))
-
                 for k, (i, j) in enumerate(batch):
                     data_out[:, j:(j + n), i:(i + n)] = prob[k]
 
@@ -180,5 +183,6 @@ if __name__ == '__main__':
             data_out = data_out.cpu().numpy()
 
         # Write results to file
+        data_out[nodata_mask == 0] = magic_nodata
         with rio.open(outfile, 'w', **out_raw_profile) as outfile_raw_ds:
             outfile_raw_ds.write(data_out)
