@@ -64,7 +64,7 @@ def compute(args):
         raise Exception()
 
     if args.architecture in {'tree', 'cloud'}:
-        model.load_state_dict(torch.load(args.pth_load), strict=True)
+        model.load_state_dict(torch.load(args.pth_load, map_location=device), strict=True)
     elif 'algae' in args.architecture:
         state = torch.load(args.pth_load)
         for key in list(state.keys()):
@@ -107,7 +107,9 @@ def compute(args):
             data_out = torch.zeros((3, height, width),
                                 dtype=torch.float32).to(device)
 
+            log.info('Reading nodata masks ...')
             nodata_mask = infile_ds.read_masks([1,2,3])
+            log.info('... done reading nodata masks.')
 
             if bandcount == 224:
                 indexes = list(range(1, 224 + 1))
